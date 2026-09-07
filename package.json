@@ -1,0 +1,13 @@
+{
+  "name": "marteau",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "MARTEAU — audit de portefeuille immobilier. Couche de collecte.",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@neondatabase/serverless": "^0.10.4"
+  }
+}

@@ -1,0 +1,108 @@
+// Contrôle de santé. Même parti que celui de MATRICE, et pour la même
+// raison : sans lui, on diagnostique une base mal branchée en créant des
+// dossiers de test.
+//
+// Présence des variables, JAMAIS leur valeur.
+
+import { db } from '../lib/db.js';
+
+const TABLES = [
+  'marteau_famille', 'marteau_voyant_ref', 'marteau_dossier',
+  'marteau_societe', 'marteau_unite_fonciere', 'marteau_groupe',
+  'marteau_parcelle', 'marteau_voyant', 'marteau_piece',
+  'marteau_reserve', 'marteau_photo', 'marteau_rapport',
+  'marteau_journal', 'marteau_appel',
+];
+
+export default async function handler(req, res) {
+  const t0 = Date.now();
+
+  const config = {
+    DATABASE_URL: Boolean(process.env.DATABASE_URL),
+    REDPAR_URL: Boolean(process.env.REDPAR_URL),
+    CRON_SECRET: Boolean(process.env.CRON_SECRET),
+    MARTEAU_CODE_LEVEE: Boolean(process.env.MARTEAU_CODE_LEVEE),
+  };
+
+  const rapport = {
+    service: 'MARTEAU',
+    le: new Date().toISOString(),
+    node: process.version,
+    // La région se LIT à l'exécution, elle ne se croit pas sur un
+    // réglage. La région de BUILD reste iad1 : ne pas confondre.
+    execution: {
+      region: process.env.VERCEL_REGION || null,
+      environnement: process.env.VERCEL_ENV || null,
+      commit: (process.env.VERCEL_GIT_COMMIT_SHA || '').slice(0, 7) || null,
+    },
+    config,
+    base: null,
+    tables: null,
+    referentiel: null,
+    journal: null,
+  };
+
+  if (!config.DATABASE_URL) {
+    rapport.base = 'DATABASE_URL absente';
+    rapport.etat = 'incomplet';
+    rapport.ms = Date.now() - t0;
+    return res.status(503).json(rapport);
+  }
+
+  try {
+    const sql = db();
+
+    const presentes = await sql`
+      SELECT table_name FROM information_schema.tables
+       WHERE table_schema = 'public' AND table_name = ANY(${TABLES})
+    `;
+    const trouvees = presentes.map((r) => r.table_name);
+    const manquantes = TABLES.filter((t) => !trouvees.includes(t));
+
+    rapport.base = 'joignable';
+    rapport.tables = manquantes.length
+      ? { etat: 'INCOMPLÈTES', manquantes }
+      : { etat: 'complètes', nombre: trouvees.length };
+
+    // Le référentiel doit être complet ET annoté : une famille sans note
+    // fixe sort un rendu amputé de son en-tête, et personne ne le
+    // remarquerait avant de relire un rapport.
+    const [ref] = await sql`
+      SELECT (SELECT count(*) FROM marteau_famille)                        AS familles,
+             (SELECT count(*) FROM marteau_famille WHERE note_fixe IS NULL) AS sans_note,
+             (SELECT count(*) FROM marteau_voyant_ref)                      AS voyants
+    `;
+    rapport.referentiel = {
+      familles: Number(ref.familles),
+      voyants: Number(ref.voyants),
+      etat: Number(ref.familles) === 10 && Number(ref.voyants) === 21
+        && Number(ref.sans_note) === 0
+        ? 'complet'
+        : `INCOMPLET — ${ref.sans_note} famille(s) sans note fixe`,
+    };
+
+    // L'inaltérabilité n'est acquise que si les triggers sont ACTIFS.
+    // Un trigger désactivé ne se voit nulle part dans l'interface Neon,
+    // et le propriétaire de la table peut le désactiver : ce contrôle
+    // est le seul endroit où l'oubli se rattrape.
+    const triggers = await sql`
+      SELECT tgname, tgenabled FROM pg_trigger
+       WHERE tgname LIKE 'marteau_journal%'
+    `;
+    const eteints = triggers.filter((t) => t.tgenabled !== 'O');
+    rapport.journal = eteints.length
+      ? { etat: 'ALTÉRABLE — trigger désactivé', triggers: eteints.map((t) => t.tgname) }
+      : { etat: 'inaltérable', triggers: triggers.length };
+
+    rapport.etat = rapport.tables.etat === 'complètes'
+      && rapport.referentiel.etat === 'complet'
+      && rapport.journal.etat === 'inaltérable'
+      ? 'operationnel' : 'incomplet';
+  } catch (e) {
+    rapport.base = `INJOIGNABLE — ${e.message}`;
+    rapport.etat = 'incomplet';
+  }
+
+  rapport.ms = Date.now() - t0;
+  return res.status(rapport.etat === 'operationnel' ? 200 : 503).json(rapport);
+}

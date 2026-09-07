@@ -1,0 +1,12 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "regions": ["fra1"],
+  "functions": {
+    "api/sante.js": { "maxDuration": 30 },
+    "api/collecter.js": { "maxDuration": 60 },
+    "api/reprise.js": { "maxDuration": 60 }
+  },
+  "crons": [
+    { "path": "/api/reprise", "schedule": "*/2 * * * *" }
+  ]
+}
