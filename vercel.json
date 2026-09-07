@@ -27,6 +27,9 @@
     },
     "api/etat.js": {
       "maxDuration": 30
+    },
+    "api/lever.js": {
+      "maxDuration": 30
     }
   }
 }

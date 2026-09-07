@@ -142,6 +142,14 @@
         <div style="flex:0 0 auto"><button id="enreg">Enregistrer et collecter</button></div>
       </div>
       <div id="enreg-res"></div>
+      <div class="rang" style="margin-top:14px;padding-top:12px;border-top:1px solid var(--bord)">
+        <div style="flex:0 0 220px">
+          <label for="ref">Rouvrir un dossier existant</label>
+          <input type="text" id="ref" placeholder="2026-0001" autocomplete="off">
+        </div>
+        <div style="flex:0 0 auto"><button class="sec" id="rouvrir">Afficher l'état</button></div>
+      </div>
+      <div id="etat-res" style="margin-top:12px"></div>
     </section>
 
     <section class="carte">
@@ -552,6 +560,92 @@ $('#ouvre').addEventListener('click', () => {
   window.open(MATRICE_URL + '/?dossier=' + encodeURIComponent('MARTEAU-' + new Date().toISOString().slice(0, 10)), '_blank');
 });
 
+// ------------------------------------------------------ état d'un dossier
+// Lecture seule. C'est ce qui survit au rechargement : jauges réelles,
+// réserves ouvertes, sociétés du périmètre, queue du journal chaîné.
+async function afficherEtat(ref) {
+  $('#etat-res').innerHTML = '<div class="att">Lecture du dossier ' + e(ref) + '…</div>';
+  const r = await fetch('/api/etat?dossier=' + encodeURIComponent(ref));
+  const d = await r.json();
+  if (!r.ok) { $('#etat-res').innerHTML = '<div class="alerte">' + e(d.erreur) + '</div>'; return; }
+
+  // Les jauges du haut de page prennent les valeurs réelles.
+  const jp = d.jauges.pieces, jr = d.jauges.reserves;
+  $('#j1').style.width = (jp.demandees ? 100 * jp.recues / jp.demandees : 0) + '%';
+  $('#j1t').textContent = n(jp.recues) + ' / ' + n(jp.demandees) + ' recues';
+  $('#j2').style.width = (jr.total ? 100 * jr.levees / jr.total : 0) + '%';
+  $('#j2t').textContent = n(jr.levees) + ' / ' + n(jr.total) + ' levee(s)';
+
+  const confiance = (s) => s.niveau_confiance === 'structuree'
+    ? '<span class="past p-canard"></span>fait'
+    : '<span class="past p-orange"></span>lecture, à confirmer';
+  const role = (s) => s.role_fusion ? ' · ' + e(s.role_fusion) : '';
+
+  let h = '<div class="info"><b>Dossier ' + e(d.dossier.reference) + '</b> — ' + e(d.dossier.denomination || d.dossier.siren)
+    + ' · associé ' + e(d.dossier.associe) + (d.dossier.collaborateur ? ' · collaborateur ' + e(d.dossier.collaborateur) : '')
+    + ' · ouvert le ' + new Date(d.dossier.ouvert_le).toLocaleString('fr-FR')
+    + ' · <b>' + (d.dossier.etat === 'provisoire' ? 'provisoire' : 'définitif possible') + '</b></div>';
+
+  h += '<h3 style="font-size:15px;margin:12px 0 6px">Réserves — ' + n(jr.total - jr.levees) + ' ouverte(s)</h3>'
+    + '<table><thead><tr><th></th><th>Réserve</th><th>Ouverte le</th><th>Levée</th></tr></thead><tbody>'
+    + d.reserves.map((x) => '<tr' + (x.levee_le ? ' class="off"' : '') + '>'
+      + '<td><span class="past ' + (x.levee_le ? 'p-canard' : 'p-orange') + '"></span></td>'
+      + '<td>' + e(x.libelle) + (x.levee_sous_code ? ' <span class="att">(sous code)</span>' : '') + '</td>'
+      + '<td>' + new Date(x.ouverte_le).toLocaleDateString('fr-FR') + '</td>'
+      + '<td>' + (x.levee_le ? e(x.levee_par) + ' — ' + e(x.motif_levee)
+          : '<button class="sec lever" data-code="' + e(x.code) + '" data-souscode="' + (x.levee_sous_code ? '1' : '') + '">Lever</button>') + '</td></tr>').join('')
+    + '</tbody></table>';
+
+  h += '<h3 style="font-size:15px;margin:16px 0 6px">Sociétés du périmètre — ' + n(d.parcelles.total) + ' parcelles sur ' + n(d.parcelles.communes) + ' communes</h3>'
+    + '<table><thead><tr><th>SIREN</th><th>Dénomination</th><th>Niveau</th><th>Confiance</th><th>Collecte</th></tr></thead><tbody>'
+    + d.societes.map((x) => '<tr><td>' + e(x.siren) + '</td><td>' + e(x.denomination || '—') + role(x) + '</td>'
+      + '<td>' + (x.niveau === 0 ? 'tête' : 'liée') + '</td><td>' + confiance(x) + '</td>'
+      + '<td>' + (x.collecte_complete ? 'complète' : 'en cours') + '</td></tr>').join('')
+    + '</tbody></table>';
+
+  h += '<h3 style="font-size:15px;margin:16px 0 6px">Piste d\'audit — chaîne ' + e(d.journal.chaine.etat) + '</h3>'
+    + '<table><thead><tr><th>Le</th><th>Qui</th><th>Quoi</th></tr></thead><tbody>'
+    + d.journal.lignes.map((x) => '<tr><td>' + new Date(x.le).toLocaleString('fr-FR') + '</td><td>' + e(x.qui) + '</td><td>' + e(x.quoi) + '</td></tr>').join('')
+    + '</tbody></table>'
+    + '<p class="att" style="margin:8px 0 4px">Empreinte de tête :</p><pre style="font-size:11px">' + e(d.journal.tete || '—') + '</pre>';
+
+  $('#etat-res').innerHTML = h;
+
+  // Levée d'une réserve. Le collaborateur lève seul ; le motif est
+  // obligatoire et journalisé ; les réserves sous code demandent le code
+  // unique, et la levée est alors imputée à l'associé en charge.
+  $('#etat-res').querySelectorAll('.lever').forEach((b) => {
+    b.addEventListener('click', async () => {
+      const motif = window.prompt('Motif de la levée (journalisé, obligatoire) :');
+      if (!motif || motif.trim().length < 5) return;
+      const code = b.dataset.souscode ? window.prompt('Cette réserve se lève sous code. Code :') : null;
+      if (b.dataset.souscode && !code) return;
+      const qui = ($('#collab').value || $('#assoc').value || 'JFD').trim().toUpperCase();
+      b.disabled = true;
+      try {
+        const r = await fetch('/api/lever', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ dossier: ref, reserve: b.dataset.code, motif: motif.trim(), qui, code }),
+        });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.erreur || 'levée refusée');
+        await afficherEtat(ref);
+      } catch (err) {
+        b.disabled = false;
+        window.alert(err.message);
+      }
+    });
+  });
+}
+
+$('#rouvrir').addEventListener('click', () => {
+  const ref = $('#ref').value.trim();
+  if (!/^\d{4}-\d{4}$/.test(ref)) { $('#etat-res').innerHTML = '<div class="alerte">Référence attendue : AAAA-NNNN.</div>'; return; }
+  $('#resultat').classList.remove('cache');
+  afficherEtat(ref).catch((err) => { $('#etat-res').innerHTML = '<div class="alerte">' + e(err.message) + '</div>'; });
+});
+$('#ref').addEventListener('keydown', (ev) => { if (ev.key === 'Enter') $('#rouvrir').click(); });
+
 // ------------------------------------------------ enregistrement + collecte
 // Deux appels enchaînés, deux responsabilités : /api/dossier ouvre (ou
 // reprend) le dossier, /api/collecter écrit ce que photo et liens rendent.
@@ -597,6 +691,8 @@ $('#enreg').addEventListener('click', async () => {
       + '</div>'
       + '<p class="att" style="margin:8px 0 4px">Empreinte de tête de la piste d\'audit — à ancrer hors de la base, elle change à chaque événement :</p>'
       + '<pre style="font-size:11px">' + e(d2.journal_tete || '—') + '</pre>';
+    $('#ref').value = d2.dossier;
+    await afficherEtat(d2.dossier);
   } catch (err) {
     $('#enreg-res').innerHTML = '<div class="alerte">' + e(err.message) + '</div>';
   } finally { $('#enreg').disabled = false; }
