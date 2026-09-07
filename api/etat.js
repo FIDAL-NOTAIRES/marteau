@@ -46,10 +46,18 @@ export default async function handler(req, res) {
     `;
     const ouvertes = reserves.filter((r) => !r.levee_le).length;
 
+    // Jauge pièces : reçues / DEMANDÉES. Les demandables n'y entrent pas —
+    // on ne compte pas comme attendue une pièce qu'on n'a pas encore demandée.
     const [pieces] = await sql`
-      SELECT count(*)::int AS demandees,
-             count(*) FILTER (WHERE statut IN ('recue','analyse'))::int AS recues
+      SELECT count(*) FILTER (WHERE statut IN ('demandee','relancee','recue','saisie','recu_a_analyser','analyse'))::int AS demandees,
+             count(*) FILTER (WHERE statut IN ('recue','analyse'))::int AS recues,
+             count(*) FILTER (WHERE statut IN ('demandable','a_saisir'))::int AS demandables
         FROM marteau_piece WHERE dossier_id = ${d.id}
+    `;
+    const registre = await sql`
+      SELECT id, famille, libelle, nature, destinataire_type, statut, premier_envoi_le, relances, depose_le
+        FROM marteau_piece WHERE dossier_id = ${d.id}
+       ORDER BY famille, id
     `;
 
     const journal = await sql`
@@ -96,13 +104,14 @@ export default async function handler(req, res) {
       },
       // Deux jauges DISTINCTES, jamais un pourcentage unique.
       jauges: {
-        pieces:   { recues: pieces.recues, demandees: pieces.demandees },
+        pieces:   { recues: pieces.recues, demandees: pieces.demandees, demandables: pieces.demandables },
         reserves: { levees: reserves.length - ouvertes, total: reserves.length },
       },
       parcelles: parc,
       societes,
       familles: dix,
       reserves,
+      registre,
       appels,
       journal: {
         lignes: journal.reverse(),

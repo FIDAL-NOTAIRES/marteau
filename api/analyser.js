@@ -55,7 +55,16 @@ export default async function handler(req, res) {
 
     // 1. identité — le K-bis est demandé par l'étude, jamais au client.
     poser('identite_attente', { date: aujourdhui() });
-    const denoms = (tete?.denominations_anterieures ?? []).map((x) => x.denomination);
+    // Dénominations distinctes — comparées SANS AUCUNE ESPACE : le BODACC
+    // porte des coquilles (« A LO YER MODERE ») qui feraient compter deux
+    // fois le même nom. On garde la graphie la plus fréquente pour l'affichage.
+    const vues = new Map();
+    for (const x of tete?.denominations_anterieures ?? []) {
+      const cle = String(x.denomination).toUpperCase().replace(/\s+/g, '');
+      const prev = vues.get(cle);
+      if (!prev || (x.annonces ?? 0) > (prev.annonces ?? 0)) vues.set(cle, x);
+    }
+    const denoms = [...vues.values()].map((x) => x.denomination);
     if (denoms.length > 1) {
       poser('identite_denominations', { nombre: denoms.length, denominations: denoms.join(' ; ') });
     }
@@ -113,7 +122,45 @@ export default async function handler(req, res) {
       parCouleur[p.couleur] += 1;
     }
 
+    // ---------------------------------------------------- registre des pièces
+    // Chaque jaune attend une pièce précise : le registre les liste comme
+    // DEMANDABLES (mémo § 9 — « toutes les pièces demandées ET toutes celles
+    // qui sont demandables »). On ne touche pas aux lignes déjà demandées ou
+    // reçues ; on repose seulement les demandables, qui sont un calcul.
+    //
+    // Le K-bis n'y est pas : il est demandé par l'étude elle-même, jamais
+    // au client (arbitrage 07/09). L'état hypothécaire a son cycle propre
+    // (à saisir → saisie → reçu → analysé), il est saisi au logiciel métier.
+    const PIECES = [
+      [2,  'piece', 'Titre de propriété',                                        'client'],
+      [4,  'piece', 'Règlement de copropriété et état descriptif de division',   'client'],
+      [4,  'piece', 'Procès-verbaux d\'assemblée générale (3 derniers exercices)', 'client'],
+      [5,  'etat_hypothecaire', 'État hypothécaire',                             'publicite_fonciere'],
+      [5,  'piece', 'Copie des actes de prêt en cours et de leurs garanties',    'client'],
+      [6,  'piece', 'Liste des autorisations d\'urbanisme délivrées',             'mairie'],
+      [6,  'piece', 'Attestations dommages-ouvrage et décennale (travaux < 10 ans)', 'client'],
+      [7,  'piece', 'Dossier de diagnostics techniques',                         'client'],
+      [8,  'piece', 'État des risques et pollutions',                            'client'],
+      [9,  'piece', 'Baux en cours et état locatif',                             'client'],
+      [9,  'piece', 'Contrats attachés à l\'immeuble (gestion, entretien, énergie)', 'client'],
+      [9,  'piece', 'Autorisations d\'occupation du domaine public',              'client'],
+      [10, 'piece', 'Acte d\'acquisition, tableau des immobilisations, factures de travaux, détail du compte 2013', 'expert_comptable'],
+    ];
+    await sql`DELETE FROM marteau_piece WHERE dossier_id = ${d.id} AND statut IN ('demandable', 'a_saisir')`;
+    const dejaLibelles = (await sql`SELECT libelle FROM marteau_piece WHERE dossier_id = ${d.id}`).map((r) => r.libelle);
+    let demandables = 0;
+    for (const [fam, nature, libelle, dest] of PIECES) {
+      if (dejaLibelles.includes(libelle)) continue;
+      await sql`
+        INSERT INTO marteau_piece (dossier_id, famille, libelle, nature, destinataire_type, statut)
+        VALUES (${d.id}, ${fam}, ${libelle}, ${nature}, ${dest},
+                ${nature === 'etat_hypothecaire' ? 'a_saisir' : 'demandable'})
+      `;
+      demandables += 1;
+    }
+
     await journaliser(d.id, String(qui).trim().toUpperCase(), 'analyse calculée', {
+      pieces_demandables: demandables,
       voyants: voyants.length, ...parCouleur,
     });
     const [{ tete: empreinte }] = await sql`SELECT marteau_journal_tete() AS tete`;
