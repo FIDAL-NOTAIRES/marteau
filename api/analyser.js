@@ -43,8 +43,10 @@ export default async function handler(req, res) {
     const [parc] = await sql`
       SELECT count(*)::int AS total, count(DISTINCT commune_insee)::int AS communes,
              coalesce(sum(contenance),0)::bigint AS contenance,
-             count(*) FILTER (WHERE droit IS NOT NULL AND droit <> 'P')::int AS demembre,
-             array_remove(array_agg(DISTINCT droit) FILTER (WHERE droit IS NOT NULL AND droit <> 'P'), NULL) AS codes
+             -- REDPAR rend le droit sous la forme « P - Propriétaire », « E - Emphytéote » :
+             -- un LIBELLÉ, pas un code nu. On teste la première lettre, comme la façade.
+             count(*) FILTER (WHERE droit IS NOT NULL AND left(trim(droit), 1) <> 'P')::int AS demembre,
+             array_remove(array_agg(DISTINCT droit) FILTER (WHERE droit IS NOT NULL AND left(trim(droit), 1) <> 'P'), NULL) AS codes
         FROM marteau_parcelle WHERE dossier_id = ${d.id} AND en_perimetre
     `;
 
