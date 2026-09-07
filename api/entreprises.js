@@ -40,7 +40,11 @@ export default async function handler(req, res) {
       creee_le: x.date_creation || null,
       nature_juridique: x.nature_juridique || null,
       ape: x.activite_principale || null,
-      siege: x.siege ? [x.siege.adresse, x.siege.code_postal, x.siege.libelle_commune].filter(Boolean).join(' ') : null,
+      // `adresse` contient déjà code postal et commune : ne pas les rajouter,
+      // sinon « 75016 PARIS 75016 PARIS ». On ne complète que si elle manque.
+      siege: x.siege
+        ? (x.siege.adresse || [x.siege.code_postal, x.siege.libelle_commune].filter(Boolean).join(' ') || null)
+        : null,
       dirigeants: (x.dirigeants ?? []).slice(0, 4).map((p) => ({
         nom: [p.prenoms, p.nom].filter(Boolean).join(' ') || p.denomination || '',
         qualite: p.qualite || null,
