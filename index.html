@@ -430,7 +430,29 @@ $('#go').addEventListener('click', async () => {
     const r = await fetch('/api/photo?' + cle);
     const d = await r.json();
     if (!r.ok) throw new Error(d.erreur || 'echec');
-    $('#etat').textContent = 'Photographie prise en ' + ((Date.now() - t0) / 1000).toFixed(1) + ' s.';
+
+    // LA MACHINE PROPOSE, L'HUMAIN DÉCIDE. Une recherche par NOM qui rend
+    // plusieurs candidats ne photographie rien : on fait choisir, comme
+    // REDPAR le fait. Le dossier s'ouvrira sur le SIREN choisi, pas sur
+    // celui que REDPAR aurait retenu seul.
+    if (!/^\d{9}$/.test(nu) && d.homonymes && d.homonymes.length > 1) {
+      $('#resultat').classList.add('cache');
+      $('#etat').innerHTML = '<div class="alerte" style="margin-top:8px"><b>' + d.homonymes.length
+        + ' sociétés répondent à ce nom.</b> Choisissez celle que vous auditez — rien n\'est photographié tant que vous n\'avez pas choisi.</div>'
+        + '<table><thead><tr><th>Dénomination</th><th>SIREN</th><th class="num">Parcelles</th><th></th></tr></thead><tbody>'
+        + d.homonymes.map((c) => '<tr><td>' + e(c.denomination) + '</td><td>' + e(c.numero_siren) + '</td>'
+          + '<td class="num">' + n(c.nb_parcelles) + '</td>'
+          + '<td><button class="sec choisir" data-siren="' + e(c.numero_siren) + '">Choisir</button></td></tr>').join('')
+        + '</tbody></table>';
+      $('#etat').querySelectorAll('.choisir').forEach((b) => b.addEventListener('click', () => {
+        $('#q').value = b.dataset.siren;
+        $('#go').click();
+      }));
+      return;
+    }
+
+    $('#etat').textContent = 'Photographie prise en ' + ((Date.now() - t0) / 1000).toFixed(1) + ' s'
+      + (!/^\d{9}$/.test(nu) ? ' — société retenue : ' + (d.societe.denomination || '') + ', SIREN ' + (d.societe.siren || '?') + '. Vérifiez avant d\'enregistrer.' : '.');
     afficher(d);
   } catch (err) {
     $('#etat').innerHTML = '<span style="color:#A01040">REDPAR indisponible — portefeuille a retraiter : '
