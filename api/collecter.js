@@ -15,7 +15,7 @@
 // deux endroits et divergera.
 
 import { db, journaliser } from '../lib/db.js';
-import { appelBorne, enregistrer } from '../lib/collecte.js';
+import { appelBorne, enregistrer, TENTATIVES_MAX } from '../lib/collecte.js';
 
 // En production, une fonction s'appelle elle-même par son domaine de
 // déploiement. VERCEL_URL le donne sans le protocole.
@@ -34,8 +34,49 @@ const notre = (chemin, params) => async (signal) => {
   return d;
 };
 
+// ---------------------------------------------------------- reprise
+// Reprise des appels en souffrance (3e tentative), fusionnée ici depuis
+// api/reprise.js le 07/09/2026 : le plan Hobby de Vercel plafonne à DOUZE
+// fonctions par déploiement, et la treizième a fait échouer deux builds.
+// Appelée par POST { action: 'reprise' } — à la main ou à l'ouverture du
+// dossier ; le cron était de toute façon refusé sur ce plan.
+async function reprise(req, res) {
+  if (process.env.CRON_SECRET
+      && req.headers.authorization !== `Bearer ${process.env.CRON_SECRET}`) {
+    return res.status(401).json({ erreur: 'non autorisé' });
+  }
+  const sql = db();
+  const enSouffrance = await sql`
+    SELECT a.id, a.source, a.tentatives, a.dossier_id, d.siren_tete AS siren
+      FROM marteau_appel a JOIN marteau_dossier d ON d.id = a.dossier_id
+     WHERE a.statut IN ('lent', 'en_cours') AND a.tentatives < ${TENTATIVES_MAX}
+       AND a.dernier_essai < now() - interval '2 minutes'
+     LIMIT 20
+  `;
+  const reprises = [];
+  for (const a of enSouffrance) {
+    const chemin = a.source === 'photo' ? '/api/photo' : a.source === 'liens' ? '/api/liens' : null;
+    if (!chemin) continue;
+    const v = await appelBorne(a.source, notre(chemin, { siren: a.siren }));
+    const definitif = v.statut !== 'ok' && a.tentatives + 1 >= TENTATIVES_MAX;
+    await sql`
+      UPDATE marteau_appel
+         SET statut = ${definitif ? 'echec' : v.statut}, tentatives = tentatives + 1,
+             dernier_essai = now(), ms = ${v.ms}, erreur = ${v.erreur ?? null}
+       WHERE id = ${a.id}
+    `;
+    reprises.push({ source: a.source, siren: a.siren, statut: v.statut, definitif });
+  }
+  return res.status(200).json({ examines: enSouffrance.length, reprises });
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ erreur: 'POST attendu' });
+
+  if (req.body?.action === 'reprise') {
+    try { return await reprise(req, res); }
+    catch (e) { console.error('[MARTEAU] reprise', e); return res.status(500).json({ erreur: e.message }); }
+  }
 
   const { dossier, qui } = req.body ?? {};
   if (!dossier || !qui) {
