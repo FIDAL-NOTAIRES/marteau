@@ -81,22 +81,43 @@ export default async function handler(req, res) {
         : `INCOMPLET — ${ref.sans_note} famille(s) sans note fixe`,
     };
 
-    // L'inaltérabilité n'est acquise que si les triggers sont ACTIFS.
-    // Un trigger désactivé ne se voit nulle part dans l'interface Neon,
-    // et le propriétaire de la table peut le désactiver : ce contrôle
-    // est le seul endroit où l'oubli se rattrape.
+    // Deux garanties de nature différente, à ne pas confondre dans le
+    // diagnostic.
+    //
+    //   • Les TRIGGERS protègent contre l'accident. Un trigger désactivé
+    //     ne se voit nulle part dans l'interface Neon : ce contrôle est
+    //     le seul endroit où l'oubli se rattrape.
+    //   • Le CHAÎNAGE prouve. Sur Neon, tout rôle hérite de
+    //     `neon_superuser` et peut donc baisser un trigger ; c'est
+    //     l'empreinte chaînée, et elle seule, qui rend une réécriture
+    //     détectable.
     const triggers = await sql`
       SELECT tgname, tgenabled FROM pg_trigger
        WHERE tgname LIKE 'marteau_journal%'
     `;
     const eteints = triggers.filter((t) => t.tgenabled !== 'O');
-    rapport.journal = eteints.length
-      ? { etat: 'ALTÉRABLE — trigger désactivé', triggers: eteints.map((t) => t.tgname) }
-      : { etat: 'inaltérable', triggers: triggers.length };
+
+    const ruptures = await sql`SELECT id, le, motif FROM marteau_journal_verifier()`;
+    const [{ tete }] = await sql`SELECT marteau_journal_tete() AS tete`;
+    const [{ lignes }] = await sql`SELECT count(*)::int AS lignes FROM marteau_journal`;
+
+    rapport.journal = {
+      lignes,
+      triggers: eteints.length
+        ? { etat: 'DÉSACTIVÉS', lesquels: eteints.map((t) => t.tgname) }
+        : { etat: 'actifs', nombre: triggers.length },
+      chaine: ruptures.length
+        ? { etat: 'ROMPUE', ruptures }
+        : { etat: lignes ? 'intègre' : 'vide — aucun événement journalisé' },
+      // Valeur à ANCRER HORS DE LA BASE. Elle apparaît ici pour passer
+      // dans les journaux Vercel, et chaque rapport généré la portera.
+      // Sans cet ancrage, le chaînage se recalcule et ne prouve rien.
+      tete,
+    };
 
     rapport.etat = rapport.tables.etat === 'complètes'
       && rapport.referentiel.etat === 'complet'
-      && rapport.journal.etat === 'inaltérable'
+      && !eteints.length && !ruptures.length
       ? 'operationnel' : 'incomplet';
   } catch (e) {
     rapport.base = `INJOIGNABLE — ${e.message}`;

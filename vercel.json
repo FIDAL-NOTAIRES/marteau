@@ -2,9 +2,12 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "regions": ["fra1"],
   "functions": {
-    "api/sante.js": { "maxDuration": 30 },
+    "api/photo.js":     { "maxDuration": 60, "memory": 1024 },
+    "api/liens.js":     { "maxDuration": 60, "memory": 1024 },
+    "api/matrice.js":   { "maxDuration": 60 },
     "api/collecter.js": { "maxDuration": 60 },
-    "api/reprise.js": { "maxDuration": 60 }
+    "api/reprise.js":   { "maxDuration": 60 },
+    "api/sante.js":     { "maxDuration": 30 }
   },
   "crons": [
     { "path": "/api/reprise", "schedule": "*/2 * * * *" }

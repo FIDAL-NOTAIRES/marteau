@@ -21,7 +21,9 @@ appelle PAINT en interne. Un seul constructeur de polygone.
 | Brique | État |
 |---|---|
 | Modèle de données (`sql/001` à `003`) | appliqué en production |
-| Couche de collecte | squelette — BODACC et REDPAR branchés |
+| Façade (`index.html`) | écrite le 01/09 — accroche large, carte Leaflet/IGN, validation du périmètre ; **familles et couleurs en retard sur le mémo** |
+| Sources (`api/photo.js`, `api/liens.js`, `api/matrice.js`) | écrites le 01/09, sans état — REDPAR, BODACC, raccord MATRICE |
+| Persistance (`api/collecter.js`) | écrit ce que les deux volets rendent |
 | Reste des sources | à brancher |
 | Rendu du rapport | non commencé |
 
@@ -30,9 +32,11 @@ appelle PAINT en interne. Un seul constructeur de polygone.
 | Variable | Rôle |
 |---|---|
 | `DATABASE_URL` | Neon, chaîne *pooled*. Base **partagée** avec MATRICE et PARTAGE AMIABLE |
-| `REDPAR_URL` | Base de l'API REDPAR (défaut : production) |
+| `REDPAR_BASE` | Base de l'API REDPAR (défaut : production). **`REDPAR_BASE`, pas `REDPAR_URL`** — nom déjà en place dans `api/photo.js` et `api/liens.js` |
 | `CRON_SECRET` | Protège `/api/reprise` |
 | `MARTEAU_CODE_LEVEE` | Code unique des levées de réserve. **Jamais dans le code** |
+| `MATRICE_BASE` | Base de l'API MATRICE (défaut : production) |
+| `MATRICE_PASSE`, `MATRICE_AUTEUR` | Raccord machine vers MATRICE — **non posées** tant que la question du jeton machine n'est pas tranchée (voir pièges) |
 
 ## Pièges connus
 
@@ -42,8 +46,29 @@ appelle PAINT en interne. Un seul constructeur de polygone.
   PARTAGE AMIABLE, les `matrice_*` à MATRICE. Ne rien y toucher.
 * `marteau_journal` refuse `UPDATE`, `DELETE` et `TRUNCATE`. Un dossier
   se **clôt** (`clos_le`), il ne se supprime pas.
-* Un trigger est désactivable par le propriétaire de la table :
-  `/api/sante` vérifie qu'ils sont actifs, c'est le seul filet.
+* Un trigger est désactivable par le propriétaire de la table — et sur
+  Neon **tout** rôle hérite de `neon_superuser`, appartenance qui ne se
+  révoque pas. Un rôle applicatif restreint est donc impossible ici :
+  c'est le **chaînage par empreinte** (`sql/005`) qui prouve, pas le
+  trigger. La garantie suppose que `marteau_journal_tete()` soit ancrée
+  hors de la base.
+* `api/collecter.js` ne doit JAMAIS appeler REDPAR ni le BODACC
+  directement. Il passe par `/api/photo` et `/api/liens`, sans quoi la
+  logique existerait en deux endroits et divergerait.
+* **Façade en retard sur le mémo.** `index.html` (01/09) affiche « les six
+  familles de risque » et l'ancienne échelle à trois couleurs. Le mémo v3
+  en compte dix, et quatre couleurs. À mettre à jour — pas en priorité,
+  la façade n'engage rien, mais ne pas s'y fier comme référence.
+* **Raccord MARTEAU → MATRICE.** `api/matrice.js` exige
+  `MATRICE_MOT_DE_PASSE` côté MATRICE, alors que MATRICE est verrouillée
+  par Entra et que l'absence de ce mot de passe est saine. Poser le mot
+  de passe rouvrirait une porte de recette en production. Il faut un jeton
+  dédié aux appels de machine à machine, distinct du verrou humain — à
+  concevoir. En attendant, l'appel rend 503 avec la charge prête, et le
+  parcours « Copier / Ouvrir MATRICE » fonctionne.
+* Deux colonnes proches sur `marteau_societe` : `niveau` est la
+  profondeur dans l'arborescence, `niveau_confiance` dit si le lien est
+  un fait (champ structuré) ou une lecture de texte libre.
 
 ## Contrôle
 

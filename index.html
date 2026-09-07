@@ -1,0 +1,537 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MARTEAU — audit de portefeuille</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<style>
+  :root{
+    --nuit:#0F2238; --canard:#33838B; --orange:#FF982D; --carmin:#A01040;
+    --cyan:#6DD5DC; --jaune-forme:#FFE764; --jaune-texte:#FFC900;
+    --gris:#8A94A0; --fond:#F4F6F8; --bord:#DDE3E9;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--fond);color:var(--nuit);
+       font-family:"Segoe UI",Segoe,system-ui,sans-serif;font-size:14px;line-height:1.5}
+  h1,h2,h3{font-family:Georgia,"Times New Roman",serif;font-weight:normal;margin:0}
+  a{color:var(--canard)}
+  header{background:var(--nuit);color:#fff;padding:18px 24px}
+  header h1{font-size:22px;letter-spacing:.5px}
+  header .sous{color:var(--cyan);font-size:12px;margin-top:2px}
+  main{max-width:1180px;margin:0 auto;padding:20px 24px 60px}
+  .carte{background:#fff;border:1px solid var(--bord);border-radius:4px;padding:18px;margin-bottom:16px}
+  .provisoire{background:var(--jaune-forme);border-left:5px solid var(--jaune-texte);
+              padding:10px 14px;margin-bottom:16px;font-size:13px}
+  .provisoire b{font-family:Georgia,serif}
+  label{display:block;font-size:12px;text-transform:uppercase;letter-spacing:.6px;color:var(--gris);margin-bottom:4px}
+  input[type=text]{width:100%;padding:10px 12px;border:1px solid var(--bord);border-radius:3px;
+                   font-family:inherit;font-size:15px}
+  button{background:var(--canard);color:#fff;border:0;border-radius:3px;padding:10px 18px;
+         font-family:inherit;font-size:14px;cursor:pointer}
+  button:hover{background:#2b6f76}
+  button.sec{background:#fff;color:var(--nuit);border:1px solid var(--bord)}
+  button:disabled{opacity:.45;cursor:default}
+  .rang{display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap}
+  .rang > div{flex:1;min-width:220px}
+  .tuiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:16px}
+  .tuile{background:#fff;border:1px solid var(--bord);border-radius:4px;padding:14px}
+  .tuile .n{font-family:Georgia,serif;font-size:26px;color:var(--nuit)}
+  .tuile .l{font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--gris)}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th{text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--gris);
+     border-bottom:2px solid var(--bord);padding:8px 6px;white-space:nowrap}
+  td{border-bottom:1px solid var(--bord);padding:7px 6px;vertical-align:top}
+  td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
+  tr.off{opacity:.4}
+  .past{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:5px;vertical-align:-1px}
+  .p-canard{background:var(--canard)} .p-orange{background:var(--orange)}
+  .p-carmin{background:var(--carmin)} .p-gris{background:var(--gris)}
+  .jauge{margin-bottom:10px}
+  .jauge .t{display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px}
+  .jauge .b{height:8px;background:var(--bord);border-radius:4px;overflow:hidden}
+  .jauge .f{height:100%;background:var(--canard)}
+  .jauge.res .f{background:var(--orange)}
+  #carte{height:380px;border:1px solid var(--bord);border-radius:4px}
+  .legende{font-size:12px;color:var(--gris);margin-top:8px}
+  .outils a{display:inline-block;margin:2px 6px 2px 0;font-size:12px;padding:3px 8px;
+            border:1px solid var(--bord);border-radius:3px;text-decoration:none;background:#fff}
+  .alerte{background:#FCEEF1;border-left:5px solid var(--carmin);padding:10px 14px;margin-bottom:14px;font-size:13px}
+  .info{background:#EAF3F4;border-left:5px solid var(--canard);padding:10px 14px;margin-bottom:14px;font-size:13px}
+  pre{background:var(--nuit);color:var(--cyan);padding:12px;border-radius:3px;overflow:auto;font-size:12px}
+  .cache{display:none}
+  .att{color:var(--gris);font-size:12px}
+  .grille6{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:8px;font-size:12px}
+  .fam{border:1px solid var(--bord);border-radius:3px;padding:8px;background:#fff}
+  .fam .nom{font-weight:600}
+  .fam .src{color:var(--gris);font-size:11px}
+  footer{color:var(--gris);font-size:11px;text-align:center;padding:20px}
+</style>
+</head>
+<body>
+<header>
+  <h1>MARTEAU</h1>
+  <div class="sous">Audit de portefeuille — REDPAR · BODACC · MATRICE · PAINT · URBA · TRENTE · XYLO</div>
+</header>
+
+<main>
+  <section class="carte" id="ecran-accroche">
+    <h2 style="font-size:18px;margin-bottom:4px">Accroche large</h2>
+    <p class="att" style="margin:0 0 14px">
+      Un seul point d'entree : le nom de la societe, ou son SIREN. MARTEAU interroge REDPAR
+      et ramasse tout ce qui s'y rattache. La liste est ensuite validee commune par commune
+      avant tout depart vers l'exterieur.
+    </p>
+    <div class="rang">
+      <div>
+        <label for="q">Societe (denomination ou SIREN)</label>
+        <input type="text" id="q" placeholder="LOGIS METROPOLE — ou 886980440" autocomplete="off">
+      </div>
+      <div style="flex:0 0 auto">
+        <button id="go">Photographier le patrimoine</button>
+      </div>
+    </div>
+    <div id="etat" class="att" style="margin-top:10px"></div>
+  </section>
+
+  <div id="resultat" class="cache">
+    <div class="provisoire">
+      <b>Audit version provisoire a la date du <span id="dategen"></span></b> —
+      une seule reserve suffit a l'empecher de devenir definitif. Reserve systematique ouverte :
+      <i>validation par le notaire associe en charge du dossier</i>, levable par lui seul.
+    </div>
+
+    <div id="avert"></div>
+
+    <section class="carte">
+      <h2 style="font-size:18px" id="titre-soc"></h2>
+      <div class="att" id="ident-soc" style="margin-bottom:14px"></div>
+      <div class="tuiles" id="tuiles"></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px">
+        <div class="jauge">
+          <div class="t"><span>Jauge pieces — recues / demandees</span><span id="j1t">0 %</span></div>
+          <div class="b"><div class="f" id="j1" style="width:0%"></div></div>
+        </div>
+        <div class="jauge res">
+          <div class="t"><span>Jauge reserves — levees / ouvertes</span><span id="j2t">0 %</span></div>
+          <div class="b"><div class="f" id="j2" style="width:0%"></div></div>
+        </div>
+      </div>
+      <p class="att" style="margin:2px 0 0">
+        Deux jauges distinctes, jamais un pourcentage unique : recevoir toutes les pieces ne leve
+        pas toutes les reserves — une piece recue peut confirmer le probleme.
+      </p>
+    </section>
+
+    <section class="carte">
+      <h2 style="font-size:18px;margin-bottom:10px">Carte a deux etages</h2>
+      <div id="carte"></div>
+      <div class="legende">
+        Niveau communal : chaque commune porte une pastille de synthese, la couleur la plus grave
+        l'emporte. Cliquez une commune puis « zoom parcellaire » pour descendre aux contours reels
+        du plan cadastral, servis par REDPAR <code>/api/geo</code>.
+      </div>
+    </section>
+
+    <section class="carte">
+      <h2 style="font-size:18px;margin-bottom:10px">Les six familles de risque</h2>
+      <div class="grille6" id="familles"></div>
+      <p class="att" style="margin:10px 0 0">
+        Orange documente, carmin alerte : seul le carmin remonte au sommaire de l'audit general,
+        et une seule pastille carmin suffit a basculer la parcelle en audit approfondi.
+      </p>
+    </section>
+
+    <section class="carte">
+      <h2 style="font-size:18px;margin-bottom:4px">Dénominations successives et sociétés liées</h2>
+      <p class="att" style="margin:0 0 12px">
+        Le BODACC, interrogé par SIREN. Il rend les noms sous lesquels la société a été publiée —
+        c'est cette liste qu'on porte au fichier immobilier, pas la seule dénomination du jour —
+        et il nomme les sociétés absorbantes et absorbées des avis de fusion.
+      </p>
+      <button id="liens">Chercher la chaîne des SIREN</button>
+      <div id="liens-res" style="margin-top:14px"></div>
+    </section>
+
+    <section class="carte">
+      <h2 style="font-size:18px;margin-bottom:4px">Validation fine du perimetre</h2>
+      <p class="att" style="margin:0 0 12px">
+        Rien n'entre dans le perimetre sans une main sur le bouton. Decochez ce qui ne releve pas
+        de l'audit : seules les communes cochees partent vers MATRICE.
+      </p>
+      <div style="overflow:auto;max-height:420px">
+        <table id="tbl">
+          <thead><tr>
+            <th style="width:28px"><input type="checkbox" id="tous" checked></th>
+            <th>Commune</th><th>INSEE</th>
+            <th class="num">Parcelles</th><th class="num">Locaux</th><th class="num">Contenance</th>
+            <th>Signalements</th><th>Outils</th>
+          </tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="carte">
+      <h2 style="font-size:18px;margin-bottom:4px">Demande des matrices cadastrales — MATRICE</h2>
+      <p class="att" style="margin:0 0 12px">
+        MARTEAU n'ecrit pas les demandes : il pousse le portefeuille a MATRICE, qui route chaque
+        commune vers son SDIF/PTGC competent, deduit par voisinage celles hors referentiel, et
+        prepare les courriels. Aucun envoi ne part sans un clic humain, dans MATRICE.
+      </p>
+      <div class="rang" style="margin-bottom:12px">
+        <div style="flex:0 0 auto"><button id="copie">Copier le portefeuille pour MATRICE</button></div>
+        <div style="flex:0 0 auto"><button id="ouvre">Ouvrir MATRICE</button></div>
+        <div style="flex:0 0 auto"><button class="sec" id="mat">Router ici (raccord machine)</button></div>
+      </div>
+      <p class="att" style="margin:-6px 0 12px">
+        MATRICE est fermee par Entra : c'est votre session qui l'ouvre. Copier puis coller dans son
+        ecran d'import donne le routage reel. Le raccord machine direct existe dans MARTEAU
+        (<code>/api/matrice</code>, toujours en simulation) et s'activera le jour ou un jeton
+        delegue ou le mot de passe de recette sera pose.
+      </p>
+      <div id="mat-res"></div>
+    </section>
+  </div>
+</main>
+
+<footer>
+  MARTEAU v0.2 — donnee de pre-controle. Seul le releve de propriete ou l'etat hypothecaire fait foi.
+  Sources DGFiP (Licence Ouverte 2.0) et BODACC / DILA.
+</footer>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+const REDPAR = 'https://redpar-backend.vercel.app';
+const OUTIL = (p) => `https://${p}-jean-francoisdumetz-7391s-projects.vercel.app/`;
+const MATRICE_URL = OUTIL('matrice').slice(0, -1);
+
+const $ = (s) => document.querySelector(s);
+const e = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const n = (v) => Number(v || 0).toLocaleString('fr-FR');
+const m2 = (v) => Number(v || 0).toLocaleString('fr-FR') + ' m2';
+
+let PHOTO = null, carte = null, coucheCommunes = null, coucheParcelles = null;
+
+const FAMILLES = [
+  { cle: 'environnemental', nom: 'Environnemental', src: 'BASOL / BASIAS / aleas — via XYLO et la brique risques' },
+  { cle: 'urbanisme', nom: 'Urbanisme', src: 'zonage, emplacement reserve — via URBA' },
+  { cle: 'servitude', nom: 'Servitude', src: 'passage, canalisation, ligne HT — instruction manuelle' },
+  { cle: 'titre', nom: 'Titre', src: 'origine de propriete — via TRENTE et le BODACC' },
+  { cle: 'bati', nom: 'Bati', src: 'construction non declaree — REDPAR locaux + PAINT' },
+  { cle: 'acces', nom: 'Acces', src: 'enclavement — PAINT (contours) + instruction' },
+];
+
+function pastilleCommune(c) {
+  const autres = (c.droits || []).filter((d) => d && d.charAt(0) !== 'P');
+  return autres.length
+    ? { cl: 'p-orange', txt: 'Titre — droits autres que proprietaire : ' + autres.join(', ') }
+    : { cl: 'p-gris', txt: 'Six familles a instruire' };
+}
+
+function afficher(p) {
+  PHOTO = p;
+  $('#resultat').classList.remove('cache');
+  $('#liens-res').innerHTML = '';
+  $('#dategen').textContent = new Date(p.genere_le).toLocaleDateString('fr-FR');
+  $('#titre-soc').textContent = p.societe.denomination || '(denomination inconnue)';
+  $('#ident-soc').innerHTML = 'SIREN ' + e(p.societe.siren || '—')
+    + ' · millesime FPMU ' + e(p.societe.millesime || '—')
+    + ' · photographie prise le ' + new Date(p.genere_le).toLocaleString('fr-FR');
+
+  let av = '';
+  if (p.indisponible && p.indisponible.length) {
+    av += '<div class="alerte"><b>Volet indisponible — a retraiter.</b> '
+      + p.indisponible.map((i) => e(i.volet) + ' : ' + e(i.motif)).join(' — ')
+      + '. Les compteurs correspondants ne sont pas des zeros : ils sont inconnus.</div>';
+  }
+  if (p.tronque) {
+    av += '<div class="alerte"><b>Releve tronque par REDPAR.</b> La photographie est partielle ; '
+      + 'annonces ' + n(p.agregats.total_parcelles_annonce) + ' parcelles et '
+      + n(p.agregats.total_locaux_annonce) + ' locaux.</div>';
+  }
+  if (p.homonymes && p.homonymes.length) {
+    av += '<div class="info"><b>Homonymes detectes</b> — SIREN retenu : celui qui detient le plus de biens. '
+      + p.homonymes.map((h) => e(h.denomination) + ' (' + e(h.numero_siren) + ', ' + n(h.nb_parcelles) + ' parcelles)').join(' · ')
+      + '</div>';
+  }
+  $('#avert').innerHTML = av;
+
+  const a = p.agregats;
+  $('#tuiles').innerHTML = [
+    ['Communes', n(a.communes)], ['Departements', n(a.departements)],
+    ['Parcelles', n(a.parcelles)], ['Locaux', n(a.locaux)],
+    ['Contenance', m2(a.contenance_m2)],
+  ].map((x) => '<div class="tuile"><div class="n">' + x[1] + '</div><div class="l">' + x[0] + '</div></div>').join('');
+
+  $('#j1').style.width = '0%'; $('#j1t').textContent = '0 / 0 recues';
+  $('#j2').style.width = '0%'; $('#j2t').textContent = '0 / 1 levee';
+
+  const orangeTitre = p.communes.some((c) => pastilleCommune(c).cl === 'p-orange');
+  $('#familles').innerHTML = FAMILLES.map((f) => {
+    const instruit = f.cle === 'titre' && orangeTitre;
+    return '<div class="fam"><div class="nom"><span class="past ' + (instruit ? 'p-orange' : 'p-gris') + '"></span>'
+      + e(f.nom) + '</div><div class="src">' + (instruit ? 'signalements releves' : 'a instruire')
+      + ' — ' + e(f.src) + '</div></div>';
+  }).join('');
+
+  const tb = $('#tbl tbody');
+  tb.innerHTML = p.communes.map((c, i) => {
+    const pa = pastilleCommune(c);
+    const ref = (c.parcelles[0] && c.parcelles[0].ref) || '';
+    return '<tr data-i="' + i + '">'
+      + '<td><input type="checkbox" class="ck" checked></td>'
+      + '<td>' + e(c.nom_commune || '—') + '</td>'
+      + '<td>' + e(c.code_insee) + '</td>'
+      + '<td class="num">' + n(c.nb_parcelles) + '</td>'
+      + '<td class="num">' + n(c.nb_locaux) + '</td>'
+      + '<td class="num">' + m2(c.contenance) + '</td>'
+      + '<td><span class="past ' + pa.cl + '"></span>' + e(pa.txt) + '</td>'
+      + '<td class="outils">'
+      + '<a href="' + OUTIL('paint') + '?q=' + encodeURIComponent(ref) + '" target="_blank" rel="noopener">PAINT</a>'
+      + '<a href="' + OUTIL('urba') + '" target="_blank" rel="noopener">URBA</a>'
+      + '<a href="' + OUTIL('trente') + '" target="_blank" rel="noopener">TRENTE</a>'
+      + '<a href="' + OUTIL('xylo') + '?insee=' + e(c.code_insee) + '" target="_blank" rel="noopener">XYLO</a>'
+      + '</td></tr>';
+  }).join('');
+  tb.querySelectorAll('.ck').forEach((k) => k.addEventListener('change', (ev) => {
+    ev.target.closest('tr').classList.toggle('off', !ev.target.checked);
+  }));
+
+  dessiner(p);
+}
+
+async function dessiner(p) {
+  if (typeof L === 'undefined') { $('#carte').innerHTML = '<p class="att" style="padding:14px">Leaflet indisponible — carte a retraiter. Le reste de la photographie est intact.</p>'; return; }
+  if (!carte) {
+    carte = L.map('carte').setView([46.7, 2.4], 6);
+    L.tileLayer('https://data.geopf.fr/wmts?SERVICE=WMTS&VERSION=1.0.0&REQUEST=GetTile'
+      + '&LAYER=GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2&STYLE=normal&TILEMATRIXSET=PM'
+      + '&FORMAT=image/png&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}',
+      { attribution: '© IGN — Plan IGN', maxZoom: 19 }).addTo(carte);
+  }
+  if (coucheCommunes) carte.removeLayer(coucheCommunes);
+  if (coucheParcelles) { carte.removeLayer(coucheParcelles); coucheParcelles = null; }
+  coucheCommunes = L.layerGroup().addTo(carte);
+
+  // L'API Geo ne prend PAS plusieurs codes en un appel : ni « code=A,B » ni
+  // « code=A&code=B » (le premier rend 0 resultat, le second n'en garde qu'un
+  // — verifie le 02/09/2026). On interroge donc par DEPARTEMENT : un audit ne
+  // touche qu'une poignee de departements la ou il touche cinquante communes.
+  const deps = [...new Set(p.communes.map((c) => {
+    const k = c.code_insee;
+    return k.slice(0, 2) === '97' ? k.slice(0, 3) : k.slice(0, 2);
+  }))];
+  const pts = [];
+  await Promise.all(deps.map(async (d) => {
+    try {
+      const r = await fetch('https://geo.api.gouv.fr/communes?codeDepartement=' + d + '&fields=centre,nom,code');
+      if (r.ok) pts.push(...await r.json());
+    } catch (err) { /* la carte peut manquer sans emporter la photographie */ }
+  }));
+
+  const parCode = new Map(pts.map((x) => [x.code, x]));
+  const bornes = [];
+  p.communes.forEach((c) => {
+    const g = parCode.get(c.code_insee);
+    if (!g || !g.centre) return;
+    const lng = g.centre.coordinates[0], lat = g.centre.coordinates[1];
+    bornes.push([lat, lng]);
+    const pa = pastilleCommune(c);
+    const coul = pa.cl === 'p-orange' ? '#FF982D' : '#8A94A0';
+    const marque = L.circleMarker([lat, lng], {
+      radius: Math.min(6 + Math.sqrt(c.nb_parcelles + c.nb_locaux), 22),
+      color: '#0F2238', weight: 1, fillColor: coul, fillOpacity: .75,
+    }).addTo(coucheCommunes);
+    marque.bindPopup('<b>' + e(c.nom_commune) + '</b> (' + e(c.code_insee) + ')<br>'
+      + n(c.nb_parcelles) + ' parcelles · ' + n(c.nb_locaux) + ' locaux<br>' + m2(c.contenance)
+      + '<br><a href="#" class="zoom">Zoom parcellaire →</a>');
+    marque.on('popupopen', (ev) => {
+      const lien = ev.popup.getElement().querySelector('.zoom');
+      if (lien) lien.addEventListener('click', (x) => { x.preventDefault(); zoomParcellaire(c); });
+    });
+  });
+
+  // La carte est dessinee dans un panneau qui vient d'apparaitre : Leaflet a
+  // mesure un conteneur de largeur nulle. On le lui fait remesurer.
+  carte.invalidateSize();
+  if (bornes.length) carte.fitBounds(bornes, { padding: [30, 30] });
+}
+
+async function zoomParcellaire(c) {
+  const ids = c.parcelles.map((x) => x.ref).slice(0, 300).join(',');
+  const r = await fetch(REDPAR + '/api/geo?insee=' + c.code_insee + '&contours=1&ids=' + encodeURIComponent(ids));
+  if (!r.ok) { $('#mat-res').innerHTML = '<div class="alerte">REDPAR /api/geo indisponible — zoom parcellaire a retraiter.</div>'; return; }
+  const g = await r.json();
+  if (coucheParcelles) carte.removeLayer(coucheParcelles);
+  coucheParcelles = L.layerGroup().addTo(carte);
+  const bornes = [];
+  Object.keys(g.geo || {}).forEach((ref) => {
+    const v = g.geo[ref];
+    const fiche = c.parcelles.filter((x) => x.ref === ref)[0] || {};
+    const orange = fiche.droit && fiche.droit.charAt(0) !== 'P';
+    const style = { color: '#0F2238', weight: 1, fillColor: orange ? '#FF982D' : '#33838B', fillOpacity: .55 };
+    const pop = '<b>' + e(ref) + '</b><br>' + e(fiche.adresse || '') + '<br>' + m2(fiche.contenance)
+      + '<br>' + e(fiche.droit || '') + ' · ' + e(fiche.nature || '');
+    if (v.contour) {
+      const l = L.geoJSON({ type: 'Feature', geometry: v.contour }, { style }).addTo(coucheParcelles).bindPopup(pop);
+      bornes.push(l.getBounds());
+    } else if (v.lat) {
+      L.circleMarker([v.lat, v.lng], { color: style.color, weight: 1, fillColor: style.fillColor, fillOpacity: .55, radius: 5 })
+        .addTo(coucheParcelles).bindPopup(pop);
+      bornes.push(L.latLngBounds([[v.lat, v.lng], [v.lat, v.lng]]));
+    }
+  });
+  if (bornes.length) carte.fitBounds(bornes.reduce((a, b) => a.extend(b)), { padding: [20, 20] });
+}
+
+function retenues() {
+  const trs = [].slice.call(document.querySelectorAll('#tbl tbody tr'));
+  return trs.filter((tr) => tr.querySelector('.ck').checked)
+    .map((tr) => PHOTO.communes[Number(tr.dataset.i)])
+    .map((c) => ({ code_insee: c.code_insee, nom_commune: c.nom_commune, nb_lots: c.nb_parcelles + c.nb_locaux }));
+}
+
+function texteMatrice() {
+  const lignes = retenues().map((c) => c.code_insee + ';' + (c.nom_commune || '') + ';' + c.nb_lots);
+  return ['code_insee;nom_commune;nb_lots'].concat(lignes).join('\n');
+}
+
+$('#tous').addEventListener('change', (ev) => {
+  document.querySelectorAll('#tbl tbody .ck').forEach((k) => {
+    k.checked = ev.target.checked;
+    k.closest('tr').classList.toggle('off', !k.checked);
+  });
+});
+
+$('#go').addEventListener('click', async () => {
+  const q = $('#q').value.trim();
+  if (q.length < 2) { $('#etat').textContent = 'Saisissez au moins deux caracteres.'; return; }
+  $('#go').disabled = true;
+  const t0 = Date.now();
+  $('#etat').textContent = 'Interrogation de REDPAR — non bati et bati en parallele…';
+  try {
+    const nu = q.replace(/\s/g, '');
+    const cle = /^\d{9}$/.test(nu) ? 'siren=' + nu : 'nom=' + encodeURIComponent(q);
+    const r = await fetch('/api/photo?' + cle);
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.erreur || 'echec');
+    $('#etat').textContent = 'Photographie prise en ' + ((Date.now() - t0) / 1000).toFixed(1) + ' s.';
+    afficher(d);
+  } catch (err) {
+    $('#etat').innerHTML = '<span style="color:#A01040">REDPAR indisponible — portefeuille a retraiter : '
+      + e(err.message) + '</span>';
+  } finally { $('#go').disabled = false; }
+});
+
+$('#liens').addEventListener('click', async () => {
+  if (!PHOTO || !PHOTO.societe.siren) {
+    $('#liens-res').innerHTML = '<div class="alerte">Aucun SIREN resolu — lancez d\'abord une photographie.</div>';
+    return;
+  }
+  $('#liens').disabled = true;
+  $('#liens-res').innerHTML = '<div class="att">Lecture du BODACC…</div>';
+  try {
+    const r = await fetch('/api/liens?siren=' + PHOTO.societe.siren);
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.erreur || 'echec');
+
+    const pastille = (niv) => niv === 'structuree' ? 'p-canard' : 'p-orange';
+    let h = '<p class="att">' + n(d.annonces_lues) + ' annonce(s) lue(s)'
+      + (d.tronque ? ' sur ' + n(d.annonces_total) + ' — lecture plafonnee' : '') + '.</p>';
+
+    h += '<h3 style="font-size:15px;margin:14px 0 6px">Noms a interroger au fichier immobilier</h3>'
+      + '<table><thead><tr><th>Denomination</th><th class="num">Annonces</th><th>Niveau</th><th>Source</th></tr></thead><tbody>'
+      + d.denominations.map((x) => '<tr><td>' + e(x.denomination) + '</td>'
+        + '<td class="num">' + n(x.annonces) + '</td>'
+        + '<td><span class="past ' + pastille(x.niveau) + '"></span>'
+        + (x.niveau === 'structuree' ? 'donnee BODACC' : 'lecture de texte, a confirmer') + '</td>'
+        + '<td>' + x.sources.map((u, i) => '<a href="' + u + '" target="_blank" rel="noopener">avis '
+          + (i + 1) + '</a>').join(' ') + '</td></tr>').join('')
+      + '</tbody></table>';
+
+    if (d.alertes_perimetre.length) {
+      h += '<h3 style="font-size:15px;margin:20px 0 6px">Alertes de perimetre</h3>';
+      h += d.alertes_perimetre.map((a) => '<div class="alerte">'
+        + '<b>' + e(a.denomination || a.siren) + '</b> — SIREN ' + e(a.siren)
+        + (a.roles.length ? ' · ' + e(a.roles.join(', ')) : '')
+        + '<br>' + e(a.motif)
+        + '<br>REDPAR trouve <b>' + n(a.parcelles) + '</b> parcelles et <b>' + n(a.locaux)
+        + '</b> locaux a son nom.'
+        + (a.a_confirmer ? '<br><i>Lien non qualifie — a confirmer sur l\'acte.</i>' : '')
+        + '<br><button class="sec photo-liee" data-siren="' + e(a.siren) + '" style="margin-top:8px">'
+        + 'Photographier cette societe</button>'
+        + ' <a href="' + a.sources[0] + '" target="_blank" rel="noopener" style="margin-left:8px">l\'avis au BODACC</a>'
+        + '</div>').join('');
+    } else {
+      h += '<p class="att" style="margin-top:14px">Aucune societe liee ne porte de biens. '
+        + 'Cela ne veut pas dire qu\'il n\'y a pas de fusion : cela veut dire qu\'aucun bien '
+        + 'n\'est publie au nom d\'une societe liee detectee au BODACC.</p>';
+    }
+
+    h += '<p class="att" style="margin-top:12px">' + e(d.avertissement) + '</p>';
+    $('#liens-res').innerHTML = h;
+
+    // Le perimetre ne s'elargit que sur un clic. Jamais d'integration silencieuse.
+    $('#liens-res').querySelectorAll('.photo-liee').forEach((b) => {
+      b.addEventListener('click', () => {
+        $('#q').value = b.dataset.siren;
+        $('#go').click();
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      });
+    });
+  } catch (err) {
+    $('#liens-res').innerHTML = '<div class="alerte">BODACC indisponible — chaine des SIREN a retraiter : '
+      + e(err.message) + '</div>';
+  } finally { $('#liens').disabled = false; }
+});
+
+$('#mat').addEventListener('click', async () => {
+  const communes = retenues();
+  if (!communes.length) { $('#mat-res').innerHTML = '<div class="alerte">Aucune commune retenue.</div>'; return; }
+  $('#mat').disabled = true;
+  $('#mat-res').innerHTML = '<div class="att">Routage par MATRICE…</div>';
+  try {
+    const r = await fetch('/api/matrice', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ societe: PHOTO.societe.denomination, siren: PHOTO.societe.siren, communes }),
+    });
+    const d = await r.json();
+    if (!r.ok) {
+      $('#mat-res').innerHTML = '<div class="alerte"><b>' + e(d.erreur) + '</b>'
+        + (d.detail ? '<br>' + e(d.detail) : '') + '</div>'
+        + '<p class="att">Le portefeuille est pret et exact — voici ce qui partirait. '
+        + 'Utilisez « Copier le portefeuille » puis « Ouvrir MATRICE ».</p>'
+        + '<pre>' + e(texteMatrice()) + '</pre>';
+      return;
+    }
+    const R = d.resume || {};
+    $('#mat-res').innerHTML = '<div class="info"><b>Simulation MATRICE — rien n\'a ete ecrit, rien n\'est parti.</b></div>'
+      + '<div class="tuiles">'
+      + [['Communes', n(R.communes)], ['Courriels', n(R.courriels)], ['Formulaires', n(R.formulaires)],
+         ['Pretes', n(R.communesPretes)], ['En attente', n(R.enAttente)]]
+        .map((x) => '<div class="tuile"><div class="n">' + x[1] + '</div><div class="l">' + x[0] + '</div></div>').join('')
+      + '</div>'
+      + (d.deduites && d.deduites.length ? '<p class="att">Adresses deduites du voisinage : ' + d.deduites.length + '</p>' : '')
+      + (d.nonResolues && d.nonResolues.length ? '<div class="alerte">' + d.nonResolues.length + ' commune(s) non identifiee(s)</div>' : '')
+      + '<pre>' + e(JSON.stringify(d.envois || [], null, 1).slice(0, 4000)) + '</pre>';
+  } catch (err) {
+    $('#mat-res').innerHTML = '<div class="alerte">MATRICE indisponible — demandes a retraiter : ' + e(err.message) + '</div>';
+  } finally { $('#mat').disabled = false; }
+});
+
+$('#copie').addEventListener('click', async () => {
+  const t = texteMatrice();
+  try { await navigator.clipboard.writeText(t); $('#copie').textContent = 'Copie ✓'; }
+  catch (err) { $('#mat-res').innerHTML = '<pre>' + e(t) + '</pre>'; }
+  setTimeout(() => { $('#copie').textContent = 'Copier le portefeuille pour MATRICE'; }, 2500);
+});
+
+$('#ouvre').addEventListener('click', () => {
+  window.open(MATRICE_URL + '/?dossier=' + encodeURIComponent('MARTEAU-' + new Date().toISOString().slice(0, 10)), '_blank');
+});
+
+$('#q').addEventListener('keydown', (ev) => { if (ev.key === 'Enter') $('#go').click(); });
+</script>
+</body>
+</html>

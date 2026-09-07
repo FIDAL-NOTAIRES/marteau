@@ -11,12 +11,24 @@
 
 import { db } from '../lib/db.js';
 import { TENTATIVES_MAX, appelBorne } from '../lib/collecte.js';
-import { annonces } from '../lib/sources/bodacc.js';
-import { parcellesParSiren } from '../lib/sources/redpar.js';
+
+// Les volets repris sont NOS fonctions, pas les sources externes : la
+// reprise doit refaire exactement ce que la collecte a fait, sinon elle
+// écrirait autre chose que ce qu'elle remplace.
+const base = () => process.env.VERCEL_URL
+  ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000';
+
+const notre = (chemin, siren) => async (signal) => {
+  const r = await fetch(`${base()}${chemin}?siren=${siren}`,
+    { signal, headers: { Accept: 'application/json' } });
+  const d = await r.json();
+  if (!r.ok) throw new Error(d.erreur || d.motif || `HTTP ${r.status}`);
+  return d;
+};
 
 const SOURCES = {
-  bodacc: (siren) => (signal) => annonces(siren, signal),
-  redpar: (siren) => (signal) => parcellesParSiren(siren, signal),
+  photo: (siren) => notre('/api/photo', siren),
+  liens: (siren) => notre('/api/liens', siren),
 };
 
 export default async function handler(req, res) {
@@ -31,9 +43,9 @@ export default async function handler(req, res) {
     const sql = db();
 
     const enSouffrance = await sql`
-      SELECT a.id, a.source, a.tentatives, a.dossier_id, a.societe_id, s.siren
+      SELECT a.id, a.source, a.tentatives, a.dossier_id, d.siren_tete AS siren
         FROM marteau_appel a
-        JOIN marteau_societe s ON s.id = a.societe_id
+        JOIN marteau_dossier d ON d.id = a.dossier_id
        WHERE a.statut IN ('lent', 'en_cours')
          AND a.tentatives < ${TENTATIVES_MAX}
          AND a.dernier_essai < now() - interval '2 minutes'

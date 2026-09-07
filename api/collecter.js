@@ -1,19 +1,41 @@
-// Lancement de la collecte sur un dossier.
+// MARTEAU — POST /api/collecter
 //
-// Rend la main dès que les sources bornées ont répondu, et laisse les
-// reprises au cron (api/reprise.js) : le rapport doit toujours pouvoir
-// sortir, donc on ne fait jamais attendre l'appelant pour une source qui
-// traîne.
+// COUCHE DE PERSISTANCE. Elle n'interroge aucune source externe : elle
+// appelle nos propres /api/photo et /api/liens, écrits le 1er septembre,
+// et elle écrit ce qu'ils rendent.
+//
+// Pourquoi cette séparation. `photo.js` et `liens.js` sont SANS ÉTAT :
+// on peut les ouvrir dans un navigateur, les relire, les corriger sans
+// rien casser en base. Toute la mécanique d'écriture — journal chaîné,
+// registre, voyants — vit ici. Un défaut de lecture d'une source ne
+// touche donc jamais la piste d'audit, et inversement.
+//
+// Conséquence à respecter : ce fichier ne doit JAMAIS appeler REDPAR ni
+// le BODACC directement. S'il le fait un jour, la logique existera en
+// deux endroits et divergera.
 
 import { db, journaliser } from '../lib/db.js';
-import { collecterSociete, parLots, PARALLELISME_REDPAR } from '../lib/collecte.js';
-import { annonces } from '../lib/sources/bodacc.js';
-import { parcellesParSiren } from '../lib/sources/redpar.js';
+import { appelBorne, enregistrer } from '../lib/collecte.js';
+
+// En production, une fonction s'appelle elle-même par son domaine de
+// déploiement. VERCEL_URL le donne sans le protocole.
+const base = () => process.env.VERCEL_URL
+  ? `https://${process.env.VERCEL_URL}`
+  : 'http://localhost:3000';
+
+const notre = (chemin, params) => async (signal) => {
+  const url = new URL(chemin, base());
+  for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
+  const r = await fetch(url, { signal, headers: { Accept: 'application/json' } });
+  const d = await r.json();
+  // Nos fonctions rendent 502 avec un motif quand une source est muette :
+  // on relaie le motif plutôt qu'un code, il partira au registre.
+  if (!r.ok) throw new Error(d.erreur || d.motif || `HTTP ${r.status}`);
+  return d;
+};
 
 export default async function handler(req, res) {
-  if (req.method !== 'POST') {
-    return res.status(405).json({ erreur: 'POST attendu' });
-  }
+  if (req.method !== 'POST') return res.status(405).json({ erreur: 'POST attendu' });
 
   const { dossier, qui } = req.body ?? {};
   if (!dossier || !qui) {
@@ -29,40 +51,130 @@ export default async function handler(req, res) {
     `;
     if (!d) return res.status(404).json({ erreur: `dossier ${dossier} inconnu` });
 
-    const societes = await sql`
-      SELECT id, siren FROM marteau_societe
-       WHERE dossier_id = ${d.id} ORDER BY niveau, siren
-    `;
-    if (!societes.length) {
-      return res.status(409).json({
-        erreur: 'aucune société au périmètre — lancer l\'accroche large d\'abord',
-      });
+    // Les deux volets en parallèle. Chacun est borné et ne lève pas :
+    // un échec est nommé, jamais silencieux.
+    const [vPhoto, vLiens] = await Promise.all([
+      appelBorne('photo', notre('/api/photo', { siren: d.siren_tete })),
+      appelBorne('liens', notre('/api/liens', { siren: d.siren_tete })),
+    ]);
+    await enregistrer(d.id, null, vPhoto);
+    await enregistrer(d.id, null, vLiens);
+
+    let parcellesEcrites = 0;
+    let societesEcrites = 0;
+
+    // ------------------------------------------------ la société auditée
+    if (vPhoto.statut === 'ok') {
+      const p = vPhoto.donnees;
+
+      const [tete] = await sql`
+        INSERT INTO marteau_societe
+          (dossier_id, siren, denomination, forme, niveau_confiance, origine, niveau)
+        VALUES
+          (${d.id}, ${p.societe.siren ?? d.siren_tete}, ${p.societe.denomination},
+           ${p.societe.forme_juridique}, 'structuree', 'accroche', 0)
+        ON CONFLICT (dossier_id, siren) DO UPDATE
+           SET denomination = EXCLUDED.denomination,
+               forme = EXCLUDED.forme
+        RETURNING id
+      `;
+      societesEcrites += 1;
+
+      // Les parcelles, commune par commune. `photo.js` plafonne son
+      // détail à 600 par commune et le signale par `tronque` : on écrit
+      // ce qu'on a reçu, et le drapeau part au rapport — surtout pas un
+      // total silencieusement amputé.
+      for (const c of p.communes ?? []) {
+        for (const par of c.parcelles ?? []) {
+          await sql`
+            INSERT INTO marteau_parcelle
+              (dossier_id, code_parcelle, commune_insee, commune_nom,
+               siren_proprietaire, origine, a_confirmer)
+            VALUES
+              (${d.id}, ${par.ref}, ${c.code_insee}, ${c.nom_commune},
+               ${p.societe.siren ?? d.siren_tete}, 'accroche', false)
+            ON CONFLICT (dossier_id, code_parcelle) DO NOTHING
+          `;
+          parcellesEcrites += 1;
+        }
+      }
+
+      if (p.tronque || p.indisponible?.length) {
+        // Journalisé : un audit établi sur un portefeuille tronqué ou
+        // partiel doit pouvoir être daté et expliqué après coup.
+        await journaliser(d.id, qui, 'photographie partielle', {
+          tronque: Boolean(p.tronque),
+          indisponible: p.indisponible ?? [],
+          annonce: p.agregats?.total_parcelles_annonce ?? null,
+          ecrit: parcellesEcrites,
+        });
+      }
     }
 
-    // Plafond à 4 sociétés en simultané : ne pas saturer nos propres API.
-    const sorties = await parLots(societes, PARALLELISME_REDPAR, (s) =>
-      collecterSociete(d.id, s.id, {
-        bodacc: (signal) => annonces(s.siren, signal),
-        redpar: (signal) => parcellesParSiren(s.siren, signal),
-      }));
+    // -------------------------------------------- les sociétés liées
+    if (vLiens.statut === 'ok') {
+      const l = vLiens.donnees;
 
-    const completes = sorties.filter((s) => s.complete).length;
+      // Seules les sociétés liées PORTANT DES BIENS entrent : un lien
+      // sociétaire sans aucun bien n'a pas à encombrer l'audit. C'est le
+      // filtre que liens.js applique déjà pour `alertes_perimetre`.
+      for (const a of l.alertes_perimetre ?? []) {
+        await sql`
+          INSERT INTO marteau_societe
+            (dossier_id, siren, denomination, niveau_confiance, role_fusion,
+             sources_bodacc, origine, niveau)
+          VALUES
+            (${d.id}, ${a.siren}, ${a.denomination},
+             ${a.a_confirmer ? 'texte' : 'structuree'},
+             ${a.roles?.includes('absorbée') ? 'absorbee'
+               : a.roles?.includes('absorbante') ? 'absorbante' : null},
+             ${JSON.stringify((a.sources ?? []).slice(0, 3))}::jsonb,
+             'bodacc', 1)
+          ON CONFLICT (dossier_id, siren) DO UPDATE
+             SET denomination = coalesce(EXCLUDED.denomination, marteau_societe.denomination),
+                 role_fusion  = coalesce(EXCLUDED.role_fusion, marteau_societe.role_fusion)
+        `;
+        societesEcrites += 1;
 
-    // Journalisé parce que ça engage : c'est le moment où l'état du
-    // dossier change. Le détail des verdicts reste hors journal, il vit
-    // dans marteau_appel et bougera encore.
+        // Réserve d'analyse, formulée comme le mémo l'exige : une
+        // divergence entre le portefeuille déclaré et l'état des bases
+        // publiques, JAMAIS un oubli du client.
+        await sql`
+          INSERT INTO marteau_reserve (dossier_id, code, libelle, detail)
+          VALUES (${d.id}, ${'orphelines_' + a.siren},
+                  'Divergence entre le portefeuille déclaré et l''état résultant des bases publiques — en cours d''analyse, en attente de réception de l''état hypothécaire',
+                  ${JSON.stringify(a)}::jsonb)
+          ON CONFLICT DO NOTHING
+        `;
+      }
+
+      // Dénominations successives de la société auditée : c'est cette
+      // liste qu'on porte au fichier immobilier, pas seulement le nom
+      // du jour.
+      if (l.denominations?.length) {
+        await sql`
+          UPDATE marteau_societe
+             SET denominations_anterieures = ${JSON.stringify(l.denominations)}::jsonb
+           WHERE dossier_id = ${d.id} AND siren = ${d.siren_tete}
+        `;
+      }
+    }
+
     await journaliser(d.id, qui, 'collecte lancée', {
-      societes: societes.length, completes,
+      photo: vPhoto.statut, liens: vLiens.statut,
+      parcelles: parcellesEcrites, societes: societesEcrites,
     });
+
+    const [{ tete }] = await sql`SELECT marteau_journal_tete() AS tete`;
 
     return res.status(200).json({
       dossier: d.reference,
-      societes: societes.length,
-      completes,
-      // Bascule automatique vers le rapport dès la dernière société
-      // complète — et on bascule même s'il reste de l'orange.
-      bascule: completes === societes.length,
-      detail: sorties,
+      volets: { photo: vPhoto.statut, liens: vLiens.statut },
+      ecrit: { parcelles: parcellesEcrites, societes: societesEcrites },
+      // Empreinte de tête de la piste d'audit. À ancrer hors de la base :
+      // c'est elle, et non le chaînage seul, qui rend une réécriture
+      // opposable.
+      journal_tete: tete,
     });
   } catch (e) {
     console.error('[MARTEAU] collecter', e);
