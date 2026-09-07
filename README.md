@@ -74,4 +74,4 @@ appelle PAINT en interne. Un seul constructeur de polygone.
 
 `GET /api/sante` — rend 200 si tables, référentiel et journal sont en
 ordre, 503 sinon, avec le détail de ce qui manque.
-Rattaché à Vercel le 7 septembre 2026
+Rattaché à Vercel le 7 septembre 2026.
