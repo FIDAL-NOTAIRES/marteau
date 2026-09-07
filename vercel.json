@@ -1,12 +1,29 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "regions": ["fra1"],
+  "regions": [
+    "fra1"
+  ],
   "functions": {
-    "api/photo.js":     { "maxDuration": 60 },
-    "api/liens.js":     { "maxDuration": 60 },
-    "api/matrice.js":   { "maxDuration": 60 },
-    "api/collecter.js": { "maxDuration": 60 },
-    "api/reprise.js":   { "maxDuration": 60 },
-    "api/sante.js":     { "maxDuration": 30 }
+    "api/photo.js": {
+      "maxDuration": 60
+    },
+    "api/liens.js": {
+      "maxDuration": 60
+    },
+    "api/matrice.js": {
+      "maxDuration": 60
+    },
+    "api/collecter.js": {
+      "maxDuration": 60
+    },
+    "api/reprise.js": {
+      "maxDuration": 60
+    },
+    "api/sante.js": {
+      "maxDuration": 30
+    },
+    "api/dossier.js": {
+      "maxDuration": 30
+    }
   }
 }

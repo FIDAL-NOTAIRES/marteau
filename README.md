@@ -20,9 +20,10 @@ appelle PAINT en interne. Un seul constructeur de polygone.
 
 | Brique | État |
 |---|---|
-| Modèle de données (`sql/001` à `003`) | appliqué en production |
+| Modèle de données (`sql/001` à `006`) | appliqué en production |
 | Façade (`index.html`) | écrite le 01/09 — accroche large, carte Leaflet/IGN, validation du périmètre ; **familles et couleurs en retard sur le mémo** |
 | Sources (`api/photo.js`, `api/liens.js`, `api/matrice.js`) | écrites le 01/09, sans état — REDPAR, BODACC, raccord MATRICE |
+| Ouverture (`api/dossier.js`) | crée le dossier, référence AAAA-NNNN, réserve systématique, première ligne du journal |
 | Persistance (`api/collecter.js`) | écrit ce que les deux volets rendent |
 | Reste des sources | à brancher |
 | Rendu du rapport | non commencé |
@@ -74,4 +75,3 @@ appelle PAINT en interne. Un seul constructeur de polygone.
 
 `GET /api/sante` — rend 200 si tables, référentiel et journal sont en
 ordre, 503 sinon, avec le détail de ce qui manque.
-Rattaché à Vercel le 7 septembre 2026.

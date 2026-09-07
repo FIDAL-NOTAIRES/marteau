@@ -123,6 +123,27 @@
       </p>
     </section>
 
+    <section class="carte" id="ecran-dossier">
+      <h2 style="font-size:18px;margin-bottom:4px">Enregistrer ce dossier dans MARTEAU</h2>
+      <p class="att" style="margin:0 0 12px">
+        Jusqu'ici rien n'a été écrit. Enregistrer ouvre le dossier en base, pose la réserve
+        systématique de validation par l'associé, puis lance la collecte : parcelles, sociétés liées,
+        réserves d'analyse — et la première ligne de la piste d'audit chaînée.
+      </p>
+      <div class="rang" style="margin-bottom:10px">
+        <div style="flex:0 0 160px">
+          <label for="assoc">Associé en charge</label>
+          <input type="text" id="assoc" placeholder="JFD" autocomplete="off" maxlength="6">
+        </div>
+        <div style="flex:0 0 160px">
+          <label for="collab">Collaborateur</label>
+          <input type="text" id="collab" placeholder="ND, NDI…" autocomplete="off" maxlength="6">
+        </div>
+        <div style="flex:0 0 auto"><button id="enreg">Enregistrer et collecter</button></div>
+      </div>
+      <div id="enreg-res"></div>
+    </section>
+
     <section class="carte">
       <h2 style="font-size:18px;margin-bottom:10px">Carte a deux etages</h2>
       <div id="carte"></div>
@@ -529,6 +550,56 @@ $('#copie').addEventListener('click', async () => {
 
 $('#ouvre').addEventListener('click', () => {
   window.open(MATRICE_URL + '/?dossier=' + encodeURIComponent('MARTEAU-' + new Date().toISOString().slice(0, 10)), '_blank');
+});
+
+// ------------------------------------------------ enregistrement + collecte
+// Deux appels enchaînés, deux responsabilités : /api/dossier ouvre (ou
+// reprend) le dossier, /api/collecter écrit ce que photo et liens rendent.
+// Si la collecte échoue, le dossier existe quand même — le rapport doit
+// toujours pouvoir sortir.
+$('#enreg').addEventListener('click', async () => {
+  if (!PHOTO || !PHOTO.societe.siren) {
+    $('#enreg-res').innerHTML = '<div class="alerte">Aucun SIREN resolu — lancez d\'abord une photographie.</div>';
+    return;
+  }
+  const associe = $('#assoc').value.trim().toUpperCase();
+  const collab = $('#collab').value.trim().toUpperCase();
+  if (!associe) { $('#enreg-res').innerHTML = '<div class="alerte">L\'associé en charge est requis : c\'est lui que la réserve systématique désigne.</div>'; return; }
+  $('#enreg').disabled = true;
+  $('#enreg-res').innerHTML = '<div class="att">Ouverture du dossier…</div>';
+  try {
+    const r1 = await fetch('/api/dossier', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ siren: PHOTO.societe.siren, denomination: PHOTO.societe.denomination,
+        associe, collaborateur: collab || null, qui: collab || associe }),
+    });
+    const d1 = await r1.json();
+    if (!r1.ok) throw new Error(d1.erreur || 'ouverture refusée');
+
+    $('#enreg-res').innerHTML = '<div class="att">Dossier ' + e(d1.dossier)
+      + (d1.repris ? ' repris' : ' ouvert') + ' — collecte en cours (REDPAR, BODACC)…</div>';
+
+    const r2 = await fetch('/api/collecter', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dossier: d1.dossier, qui: collab || associe }),
+    });
+    const d2 = await r2.json();
+    if (!r2.ok) throw new Error(d2.erreur || 'collecte en échec');
+
+    const volet = (v) => v === 'ok' ? '<span class="past p-canard"></span>ok'
+      : v === 'lent' ? '<span class="past p-orange"></span>lent — reprise à faire'
+      : '<span class="past p-orange"></span>échec — ' + e(v);
+    $('#enreg-res').innerHTML = '<div class="info"><b>Dossier ' + e(d2.dossier) + (d1.repris ? ' repris.' : ' ouvert.')
+      + '</b> ' + n(d2.ecrit.parcelles) + ' parcelles et ' + n(d2.ecrit.societes) + ' société(s) écrites.</div>'
+      + '<div class="tuiles">'
+      + '<div class="tuile"><div class="n" style="font-size:16px">' + volet(d2.volets.photo) + '</div><div class="l">Photographie</div></div>'
+      + '<div class="tuile"><div class="n" style="font-size:16px">' + volet(d2.volets.liens) + '</div><div class="l">Chaîne des SIREN</div></div>'
+      + '</div>'
+      + '<p class="att" style="margin:8px 0 4px">Empreinte de tête de la piste d\'audit — à ancrer hors de la base, elle change à chaque événement :</p>'
+      + '<pre style="font-size:11px">' + e(d2.journal_tete || '—') + '</pre>';
+  } catch (err) {
+    $('#enreg-res').innerHTML = '<div class="alerte">' + e(err.message) + '</div>';
+  } finally { $('#enreg').disabled = false; }
 });
 
 $('#q').addEventListener('keydown', (ev) => { if (ev.key === 'Enter') $('#go').click(); });
