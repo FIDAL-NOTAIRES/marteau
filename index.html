@@ -65,6 +65,15 @@
   .fam{border:1px solid var(--bord);border-radius:3px;padding:8px;background:#fff}
   .fam .nom{font-weight:600}
   .fam .src{color:var(--gris);font-size:11px}
+  .entreprise{border:1px solid var(--bord);border-radius:6px;padding:12px 14px;margin:10px 0;background:#fff;cursor:pointer}
+  .entreprise:hover{border-color:var(--canard);box-shadow:0 0 0 2px rgba(51,131,139,.15)}
+  .entreprise .titre{font-weight:600;font-size:15px}
+  .badge{display:inline-block;font-size:11px;padding:1px 7px;border-radius:3px;margin-left:6px;vertical-align:1px;border:1px solid var(--bord);color:var(--gris)}
+  .badge.ok{border-color:#B7E1C1;background:#EAF7EE;color:#1E7B3A}
+  .badge.ko{border-color:#F3C3CE;background:#FCEEF1;color:var(--carmin)}
+  .entreprise .l{color:var(--gris);font-size:12px}
+  .entreprise .l b{color:var(--nuit);font-weight:500}
+  .deux{display:grid;grid-template-columns:1fr 1fr;gap:4px 16px;margin-top:6px}
   footer{color:var(--gris);font-size:11px;text-align:center;padding:20px}
 </style>
 </head>
@@ -418,6 +427,39 @@ $('#tous').addEventListener('change', (ev) => {
   });
 });
 
+// ------------------------------------------------ vérification SIREN
+// Reprise de REDPAR : une carte par société, avec ce qui permet de la
+// reconnaître — siège, création, APE, dirigeants. Cliquer une carte
+// photographie ce SIREN et lui seul.
+async function verifierSiren(q) {
+  $('#resultat').classList.add('cache');
+  $('#etat').innerHTML = '<div class="att">Recherche dans l\'annuaire officiel des entreprises…</div>';
+  const r = await fetch('/api/entreprises?q=' + encodeURIComponent(q));
+  const d = await r.json();
+  if (!r.ok) throw new Error(d.erreur || 'annuaire indisponible');
+  if (!d.entreprises.length) {
+    $('#etat').innerHTML = '<div class="alerte">Aucune entreprise trouvée pour « ' + e(q) + ' ». Reformulez, ou saisissez le SIREN directement.</div>';
+    return;
+  }
+  let hh = '<div style="margin:12px 0 4px"><b style="font-family:Georgia,serif;font-size:16px">Vérification SIREN</b>'
+    + '<div class="att">Recherche pour : <b>' + e(q) + '</b> · <span class="badge ok">Source : ' + e(d.source) + '</span></div>'
+    + '<div class="att" style="margin-top:6px">' + n(d.entreprises.length) + ' entreprise(s) trouvée(s)' + (d.total > d.entreprises.length ? ' sur ' + n(d.total) + ' — précisez le nom si la bonne n\'y est pas' : '') + '. Cliquez celle que vous auditez.</div></div>';
+  hh += d.entreprises.map((x) => '<div class="entreprise" data-siren="' + e(x.siren) + '">'
+    + '<div class="titre">' + e(x.denomination) + (x.sigle ? ' <span class="att">(' + e(x.sigle) + ')</span>' : '')
+    + '<span class="badge">' + e(x.categorie || 'N/C') + '</span>'
+    + '<span class="badge ' + (x.active ? 'ok' : 'ko') + '">' + (x.active ? 'Active' : 'Cessée') + '</span></div>'
+    + '<div class="deux"><div class="l">SIREN : <b>' + e(x.siren) + '</b></div><div class="l">Créée : <b>' + e(x.creee_le || '—') + '</b></div></div>'
+    + '<div class="l">Adresse : <b>' + e(x.siege || '—') + '</b></div>'
+    + '<div class="l">APE : <b>' + e(x.ape || '—') + '</b></div>'
+    + (x.dirigeants.length ? '<div class="l">Dirigeants : <b>' + x.dirigeants.map((p) => e(p.nom) + (p.qualite ? ' (' + e(p.qualite) + ')' : '')).join(', ') + '</b></div>' : '')
+    + '</div>').join('');
+  $('#etat').innerHTML = hh;
+  $('#etat').querySelectorAll('.entreprise').forEach((c) => c.addEventListener('click', () => {
+    $('#q').value = c.dataset.siren;
+    $('#go').click();
+  }));
+}
+
 $('#go').addEventListener('click', async () => {
   const q = $('#q').value.trim();
   if (q.length < 2) { $('#etat').textContent = 'Saisissez au moins deux caracteres.'; return; }
@@ -426,33 +468,17 @@ $('#go').addEventListener('click', async () => {
   $('#etat').textContent = 'Interrogation de REDPAR — non bati et bati en parallele…';
   try {
     const nu = q.replace(/\s/g, '');
-    const cle = /^\d{9}$/.test(nu) ? 'siren=' + nu : 'nom=' + encodeURIComponent(q);
-    const r = await fetch('/api/photo?' + cle);
+    if (!/^\d{9}$/.test(nu)) {
+      // ÉTAPE « VÉRIFICATION SIREN », comme dans REDPAR : rien n'est
+      // photographié tant qu'une société n'a pas été choisie sur sa carte.
+      await verifierSiren(q);
+      return;
+    }
+    const r = await fetch('/api/photo?siren=' + nu);
     const d = await r.json();
     if (!r.ok) throw new Error(d.erreur || 'echec');
 
-    // LA MACHINE PROPOSE, L'HUMAIN DÉCIDE. Une recherche par NOM qui rend
-    // plusieurs candidats ne photographie rien : on fait choisir, comme
-    // REDPAR le fait. Le dossier s'ouvrira sur le SIREN choisi, pas sur
-    // celui que REDPAR aurait retenu seul.
-    if (!/^\d{9}$/.test(nu) && d.homonymes && d.homonymes.length > 1) {
-      $('#resultat').classList.add('cache');
-      $('#etat').innerHTML = '<div class="alerte" style="margin-top:8px"><b>' + d.homonymes.length
-        + ' sociétés répondent à ce nom.</b> Choisissez celle que vous auditez — rien n\'est photographié tant que vous n\'avez pas choisi.</div>'
-        + '<table><thead><tr><th>Dénomination</th><th>SIREN</th><th class="num">Parcelles</th><th></th></tr></thead><tbody>'
-        + d.homonymes.map((c) => '<tr><td>' + e(c.denomination) + '</td><td>' + e(c.numero_siren) + '</td>'
-          + '<td class="num">' + n(c.nb_parcelles) + '</td>'
-          + '<td><button class="sec choisir" data-siren="' + e(c.numero_siren) + '">Choisir</button></td></tr>').join('')
-        + '</tbody></table>';
-      $('#etat').querySelectorAll('.choisir').forEach((b) => b.addEventListener('click', () => {
-        $('#q').value = b.dataset.siren;
-        $('#go').click();
-      }));
-      return;
-    }
-
-    $('#etat').textContent = 'Photographie prise en ' + ((Date.now() - t0) / 1000).toFixed(1) + ' s'
-      + (!/^\d{9}$/.test(nu) ? ' — société retenue : ' + (d.societe.denomination || '') + ', SIREN ' + (d.societe.siren || '?') + '. Vérifiez avant d\'enregistrer.' : '.');
+    $('#etat').textContent = 'Photographie prise en ' + ((Date.now() - t0) / 1000).toFixed(1) + ' s.';
     afficher(d);
   } catch (err) {
     $('#etat').innerHTML = '<span style="color:#A01040">REDPAR indisponible — portefeuille a retraiter : '

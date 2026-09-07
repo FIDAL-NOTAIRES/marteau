@@ -22,6 +22,7 @@ appelle PAINT en interne. Un seul constructeur de polygone.
 |---|---|
 | Modèle de données (`sql/001` à `007`) | 001–006 appliquées ; **007 à appliquer** (droit par parcelle) |
 | Façade (`index.html`) | écrite le 01/09 — accroche large, carte Leaflet/IGN, validation du périmètre ; **familles et couleurs en retard sur le mémo** |
+| Vérification SIREN (`api/entreprises.js`) | reprise de REDPAR : annuaire officiel des entreprises (gouv.fr), une carte par société — siège, création, APE, dirigeants — à choisir avant toute photographie. La machine propose, l'humain décide |
 | Sources (`api/photo.js`, `api/liens.js`, `api/matrice.js`) | écrites le 01/09, sans état — REDPAR, BODACC, raccord MATRICE |
 | Ouverture (`api/dossier.js`) | crée le dossier, référence AAAA-NNNN, réserve systématique, première ligne du journal |
 | Persistance (`api/collecter.js`) | écrit ce que les deux volets rendent |

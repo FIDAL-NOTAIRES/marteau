@@ -39,6 +39,9 @@
     },
     "api/reunion.js": {
       "maxDuration": 30
+    },
+    "api/entreprises.js": {
+      "maxDuration": 30
     }
   }
 }
