@@ -160,6 +160,15 @@ export default async function handler(req, res) {
       }
     }
 
+    // Le drapeau de collecte complète : posé quand les deux volets ont
+    // répondu. Il pilote la couleur canard de la société sur l'organigramme.
+    if (vPhoto.statut === 'ok' && vLiens.statut === 'ok') {
+      await sql`
+        UPDATE marteau_societe SET collecte_complete = true
+         WHERE dossier_id = ${d.id} AND siren = ${d.siren_tete}
+      `;
+    }
+
     await journaliser(d.id, qui, 'collecte lancée', {
       photo: vPhoto.statut, liens: vLiens.statut,
       parcelles: parcellesEcrites, societes: societesEcrites,
