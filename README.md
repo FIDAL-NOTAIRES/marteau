@@ -20,12 +20,14 @@ appelle PAINT en interne. Un seul constructeur de polygone.
 
 | Brique | État |
 |---|---|
-| Modèle de données (`sql/001` à `006`) | appliqué en production |
+| Modèle de données (`sql/001` à `007`) | 001–006 appliquées ; **007 à appliquer** (droit par parcelle) |
 | Façade (`index.html`) | écrite le 01/09 — accroche large, carte Leaflet/IGN, validation du périmètre ; **familles et couleurs en retard sur le mémo** |
 | Sources (`api/photo.js`, `api/liens.js`, `api/matrice.js`) | écrites le 01/09, sans état — REDPAR, BODACC, raccord MATRICE |
 | Ouverture (`api/dossier.js`) | crée le dossier, référence AAAA-NNNN, réserve systématique, première ligne du journal |
 | Persistance (`api/collecter.js`) | écrit ce que les deux volets rendent |
 | Levée de réserve (`api/lever.js`) | motif obligatoire et journalisé ; sous code (`MARTEAU_CODE_LEVEE`) pour validation associé / DVF / état hypothécaire, imputée à l'associé en charge |
+| Bibliothèque (`lib/phrases.js`) | les blocs de phrases des dix familles, codifiés — LA source, la base ne garde que le code |
+| Analyse (`api/analyser.js`) | calcule les voyants des dix familles depuis la base seule ; recalculable ; aujourd'hui : identité (dénominations), désignation, nature du droit (famille 5), le reste en jaune motivé |
 | État (`api/etat.js`) | lecture seule d'un dossier : jauges réelles, réserves, sociétés, journal chaîné — l'écran qui survit au rechargement |
 | Reste des sources | à brancher |
 | Rendu du rapport | non commencé |
@@ -58,10 +60,6 @@ appelle PAINT en interne. Un seul constructeur de polygone.
 * `api/collecter.js` ne doit JAMAIS appeler REDPAR ni le BODACC
   directement. Il passe par `/api/photo` et `/api/liens`, sans quoi la
   logique existerait en deux endroits et divergerait.
-* **Façade en retard sur le mémo.** `index.html` (01/09) affiche « les six
-  familles de risque » et l'ancienne échelle à trois couleurs. Le mémo v3
-  en compte dix, et quatre couleurs. À mettre à jour — pas en priorité,
-  la façade n'engage rien, mais ne pas s'y fier comme référence.
 * **Raccord MARTEAU → MATRICE.** `api/matrice.js` exige
   `MATRICE_MOT_DE_PASSE` côté MATRICE, alors que MATRICE est verrouillée
   par Entra et que l'absence de ce mot de passe est saine. Poser le mot

@@ -30,6 +30,9 @@
     },
     "api/lever.js": {
       "maxDuration": 30
+    },
+    "api/analyser.js": {
+      "maxDuration": 30
     }
   }
 }

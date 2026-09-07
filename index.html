@@ -46,7 +46,7 @@
   tr.off{opacity:.4}
   .past{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:5px;vertical-align:-1px}
   .p-canard{background:var(--canard)} .p-orange{background:var(--orange)}
-  .p-carmin{background:var(--carmin)} .p-gris{background:var(--gris)}
+  .p-carmin{background:var(--carmin)} .p-gris{background:var(--gris)} .p-jaune{background:var(--jaune-texte)}
   .jauge{margin-bottom:10px}
   .jauge .t{display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px}
   .jauge .b{height:8px;background:var(--bord);border-radius:4px;overflow:hidden}
@@ -163,11 +163,12 @@
     </section>
 
     <section class="carte">
-      <h2 style="font-size:18px;margin-bottom:10px">Les six familles de risque</h2>
-      <div class="grille6" id="familles"></div>
+      <h2 style="font-size:18px;margin-bottom:10px">Les dix familles de risque</h2>
+      <div id="familles" class="att">Les familles s'affichent une fois le dossier enregistré et analysé.</div>
       <p class="att" style="margin:10px 0 0">
-        Orange documente, carmin alerte : seul le carmin remonte au sommaire de l'audit general,
-        et une seule pastille carmin suffit a basculer la parcelle en audit approfondi.
+        Canard : tout concordant. Jaune : pièce ou information encore à obtenir. Orange : procédure,
+        formalité ou vérification en cours. Carmin : discordance. La couleur d'une famille est la plus
+        grave de ses voyants ; seul le carmin remonte au sommaire.
       </p>
     </section>
 
@@ -242,20 +243,11 @@ const m2 = (v) => Number(v || 0).toLocaleString('fr-FR') + ' m2';
 
 let PHOTO = null, carte = null, coucheCommunes = null, coucheParcelles = null;
 
-const FAMILLES = [
-  { cle: 'environnemental', nom: 'Environnemental', src: 'BASOL / BASIAS / aleas — via XYLO et la brique risques' },
-  { cle: 'urbanisme', nom: 'Urbanisme', src: 'zonage, emplacement reserve — via URBA' },
-  { cle: 'servitude', nom: 'Servitude', src: 'passage, canalisation, ligne HT — instruction manuelle' },
-  { cle: 'titre', nom: 'Titre', src: 'origine de propriete — via TRENTE et le BODACC' },
-  { cle: 'bati', nom: 'Bati', src: 'construction non declaree — REDPAR locaux + PAINT' },
-  { cle: 'acces', nom: 'Acces', src: 'enclavement — PAINT (contours) + instruction' },
-];
-
 function pastilleCommune(c) {
   const autres = (c.droits || []).filter((d) => d && d.charAt(0) !== 'P');
   return autres.length
     ? { cl: 'p-orange', txt: 'Titre — droits autres que proprietaire : ' + autres.join(', ') }
-    : { cl: 'p-gris', txt: 'Six familles a instruire' };
+    : { cl: 'p-gris', txt: 'Dix familles a instruire' };
 }
 
 function afficher(p) {
@@ -296,13 +288,6 @@ function afficher(p) {
   $('#j1').style.width = '0%'; $('#j1t').textContent = '0 / 0 recues';
   $('#j2').style.width = '0%'; $('#j2t').textContent = '0 / 1 levee';
 
-  const orangeTitre = p.communes.some((c) => pastilleCommune(c).cl === 'p-orange');
-  $('#familles').innerHTML = FAMILLES.map((f) => {
-    const instruit = f.cle === 'titre' && orangeTitre;
-    return '<div class="fam"><div class="nom"><span class="past ' + (instruit ? 'p-orange' : 'p-gris') + '"></span>'
-      + e(f.nom) + '</div><div class="src">' + (instruit ? 'signalements releves' : 'a instruire')
-      + ' — ' + e(f.src) + '</div></div>';
-  }).join('');
 
   const tb = $('#tbl tbody');
   tb.innerHTML = p.communes.map((c, i) => {
@@ -603,6 +588,16 @@ async function afficherEtat(ref) {
       + '<td>' + (x.collecte_complete ? 'complète' : 'en cours') + '</td></tr>').join('')
     + '</tbody></table>';
 
+  // Les dix familles : note fixe en tête, puis les voyants. Ordre fixe.
+  const pc = (c) => c ? 'p-' + c : 'p-gris';
+  $('#familles').innerHTML = (d.familles || []).map((f) => '<details class="fam" style="margin-bottom:8px">'
+    + '<summary style="cursor:pointer"><span class="past ' + pc(f.couleur) + '"></span><b>' + f.numero + '. ' + e(f.libelle) + '</b>'
+    + (f.voyants.length ? ' <span class="att">— ' + f.voyants.length + ' voyant(s)</span>' : ' <span class="att">— non analysée</span>') + '</summary>'
+    + '<p class="att" style="margin:8px 0">' + e(f.note_fixe || '') + '</p>'
+    + f.voyants.map((v) => '<p style="margin:6px 0"><span class="past ' + pc(v.couleur) + '"></span><b>' + e(v.libelle) + '</b> — ' + e(v.texte) + '</p>').join('')
+    + '</details>').join('');
+  $('#familles').classList.remove('att');
+
   h += '<h3 style="font-size:15px;margin:16px 0 6px">Piste d\'audit — chaîne ' + e(d.journal.chaine.etat) + '</h3>'
     + '<table><thead><tr><th>Le</th><th>Qui</th><th>Quoi</th></tr></thead><tbody>'
     + d.journal.lignes.map((x) => '<tr><td>' + new Date(x.le).toLocaleString('fr-FR') + '</td><td>' + e(x.qui) + '</td><td>' + e(x.quoi) + '</td></tr>').join('')
@@ -692,6 +687,9 @@ $('#enreg').addEventListener('click', async () => {
       + '<p class="att" style="margin:8px 0 4px">Empreinte de tête de la piste d\'audit — à ancrer hors de la base, elle change à chaque événement :</p>'
       + '<pre style="font-size:11px">' + e(d2.journal_tete || '—') + '</pre>';
     $('#ref').value = d2.dossier;
+    // L'analyse suit la collecte : elle ne lit que la base.
+    await fetch('/api/analyser', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dossier: d2.dossier, qui: collab || associe }) });
     await afficherEtat(d2.dossier);
   } catch (err) {
     $('#enreg-res').innerHTML = '<div class="alerte">' + e(err.message) + '</div>';
