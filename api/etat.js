@@ -9,6 +9,7 @@
 // leur niveau de confiance, et la queue du journal chaîné avec son état.
 
 import { db } from '../lib/db.js';
+import { rendre } from '../lib/phrases.js';
 
 export default async function handler(req, res) {
   const ref = String(req.query?.dossier ?? '').trim();
@@ -59,6 +60,26 @@ export default async function handler(req, res) {
     const ruptures = await sql`SELECT id, motif FROM marteau_journal_verifier()`;
     const [{ tete }] = await sql`SELECT marteau_journal_tete() AS tete`;
 
+    // Les dix familles, dans l'ordre FIXE, chacune avec sa note fixe en
+    // tête et ses voyants rendus par la bibliothèque. Une famille sans
+    // voyant n'est pas omise : elle est dite « non analysée ».
+    const familles = await sql`SELECT numero, code, libelle, note_fixe FROM marteau_famille ORDER BY numero`;
+    const voyants = await sql`
+      SELECT v.couleur, v.phrase_code, v.precisions, v.maj_le, r.famille, r.code AS voyant, r.libelle
+        FROM marteau_voyant v JOIN marteau_voyant_ref r ON r.id = v.voyant_ref_id
+       WHERE v.dossier_id = ${d.id} ORDER BY r.famille, r.rang, v.id
+    `;
+    const ordre = { canard: 0, jaune: 1, orange: 2, carmin: 3 };
+    const dix = familles.map((f) => {
+      const vs = voyants.filter((v) => v.famille === f.numero).map((v) => ({
+        voyant: v.voyant, libelle: v.libelle, couleur: v.couleur,
+        texte: rendre(v.phrase_code, v.precisions).texte,
+      }));
+      // La couleur de la famille est la plus grave de ses voyants.
+      const pire = vs.reduce((m, v) => (ordre[v.couleur] > ordre[m] ? v.couleur : m), vs.length ? 'canard' : null);
+      return { numero: f.numero, code: f.code, libelle: f.libelle, note_fixe: f.note_fixe, couleur: pire, voyants: vs };
+    });
+
     const appels = await sql`
       SELECT source, statut, tentatives, dernier_essai, ms, erreur
         FROM marteau_appel WHERE dossier_id = ${d.id}
@@ -80,6 +101,7 @@ export default async function handler(req, res) {
       },
       parcelles: parc,
       societes,
+      familles: dix,
       reserves,
       appels,
       journal: {

@@ -89,11 +89,16 @@ export default async function handler(req, res) {
           await sql`
             INSERT INTO marteau_parcelle
               (dossier_id, code_parcelle, commune_insee, commune_nom,
-               siren_proprietaire, origine, a_confirmer)
+               siren_proprietaire, origine, a_confirmer,
+               droit, nature, contenance, adresse)
             VALUES
               (${d.id}, ${par.ref}, ${c.code_insee}, ${c.nom_commune},
-               ${p.societe.siren ?? d.siren_tete}, 'accroche', false)
-            ON CONFLICT (dossier_id, code_parcelle) DO NOTHING
+               ${p.societe.siren ?? d.siren_tete}, 'accroche', false,
+               ${par.droit || null}, ${par.nature || null},
+               ${par.contenance ?? null}, ${par.adresse || null})
+            ON CONFLICT (dossier_id, code_parcelle) DO UPDATE
+               SET droit = EXCLUDED.droit, nature = EXCLUDED.nature,
+                   contenance = EXCLUDED.contenance, adresse = EXCLUDED.adresse
           `;
           parcellesEcrites += 1;
         }

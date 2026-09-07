@@ -19,7 +19,7 @@ export default async function handler(req, res) {
 
   const config = {
     DATABASE_URL: Boolean(process.env.DATABASE_URL),
-    REDPAR_URL: Boolean(process.env.REDPAR_URL),
+    REDPAR_BASE: Boolean(process.env.REDPAR_BASE),
     CRON_SECRET: Boolean(process.env.CRON_SECRET),
     MARTEAU_CODE_LEVEE: Boolean(process.env.MARTEAU_CODE_LEVEE),
   };
