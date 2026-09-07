@@ -585,13 +585,23 @@ async function afficherEtat(ref) {
     saisie: 'saisie', recu_a_analyser: 'reçu — à analyser', recue: 'reçue', analyse: 'analysé' };
   const DEST = { client: 'client', mairie: 'mairie', publicite_fonciere: 'publicité foncière', prefecture_ars: 'préfecture / ARS', expert_comptable: 'expert-comptable' };
   h += '<h3 style="font-size:15px;margin:16px 0 6px">Registre des pièces — ' + n(jp.demandables || 0) + ' à demander, ' + n(jp.demandees) + ' demandée(s), ' + n(jp.recues) + ' reçue(s)</h3>'
-    + '<table><thead><tr><th>Fam.</th><th>Pièce</th><th>Destinataire</th><th>Statut</th></tr></thead><tbody>'
-    + (d.registre || []).map((x) => '<tr' + (['recue','analyse'].includes(x.statut) ? ' class="off"' : '') + '>'
-      + '<td>' + x.famille + '</td><td>' + e(x.libelle) + '</td>'
-      + '<td>' + e(DEST[x.destinataire_type] || x.destinataire_type || '—') + '</td>'
-      + '<td>' + e(STATUT[x.statut] || x.statut) + '</td></tr>').join('')
+    + '<table id="registre"><thead><tr><th style="width:28px"></th><th>Fam.</th><th>Pièce</th><th>Destinataire</th><th>Statut</th><th>Depuis</th></tr></thead><tbody>'
+    + (d.registre || []).map((x) => {
+        const cochable = x.statut === 'demandable' || x.statut === 'a_saisir';
+        const jours = x.premier_envoi_le ? Math.floor((Date.now() - new Date(x.premier_envoi_le)) / 86400000) : null;
+        return '<tr' + (['recue','analyse'].includes(x.statut) ? ' class="off"' : '') + '>'
+          + '<td>' + (cochable ? '<input type="checkbox" class="ckp" data-id="' + x.id + '" data-nature="' + e(x.nature) + '" checked>' : '') + '</td>'
+          + '<td>' + x.famille + '</td><td>' + e(x.libelle) + '</td>'
+          + '<td>' + e(DEST[x.destinataire_type] || x.destinataire_type || '—') + '</td>'
+          + '<td>' + e(STATUT[x.statut] || x.statut) + '</td>'
+          + '<td>' + (jours == null ? '—' : jours + ' j' + (jours > 15 ? ' <span class="past p-orange"></span>' : '')) + '</td></tr>';
+      }).join('')
     + '</tbody></table>'
-    + '<p class="att" style="margin:6px 0 0">Les pièces « à demander » sont déduites des voyants jaunes. Le K-bis n\'y figure pas : l\'étude le demande elle-même.</p>';
+    + '<div class="rang" style="margin-top:10px"><div style="flex:0 0 auto"><button class="sec" id="preparer">Préparer les demandes</button></div>'
+    + '<div style="flex:0 0 auto"><button class="sec" id="saisir">État hypothécaire saisi au logiciel métier</button></div></div>'
+    + '<div id="demandes-res" style="margin-top:10px"></div>'
+    + '<p class="att" style="margin:6px 0 0">Les pièces « à demander » sont déduites des voyants jaunes. Le K-bis n\'y figure pas : l\'étude le demande elle-même. '
+    + 'MARTEAU rédige, le collaborateur envoie depuis sa boîte — aucun mail ne part de la machine. Les demandes aux mairies partent commune par commune, brique séparée.</p>';
 
   h += '<h3 style="font-size:15px;margin:16px 0 6px">Sociétés du périmètre — ' + n(d.parcelles.total) + ' parcelles sur ' + n(d.parcelles.communes) + ' communes</h3>'
     + '<table><thead><tr><th>SIREN</th><th>Dénomination</th><th>Niveau</th><th>Confiance</th><th>Collecte</th></tr></thead><tbody>'
@@ -617,6 +627,49 @@ async function afficherEtat(ref) {
     + '<p class="att" style="margin:8px 0 4px">Empreinte de tête :</p><pre style="font-size:11px">' + e(d.journal.tete || '—') + '</pre>';
 
   $('#etat-res').innerHTML = h;
+
+  // Demandes de pièces : préparer (ne rien écrire), marquer (poser la date
+  // et journaliser), saisir (état hypothécaire au logiciel métier).
+  const cochees = (nature) => [].slice.call(document.querySelectorAll('#registre .ckp:checked'))
+    .filter((k) => !nature || k.dataset.nature === nature).map((k) => Number(k.dataset.id));
+  const quiDem = () => ($('#collab').value || $('#assoc').value || 'JFD').trim().toUpperCase();
+  const appelDem = async (action, pieces) => {
+    const r = await fetch('/api/demander', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dossier: ref, pieces, qui: quiDem(), action }) });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.erreur || 'échec');
+    return d;
+  };
+  $('#preparer').addEventListener('click', async () => {
+    const pieces = cochees('piece');
+    if (!pieces.length) { $('#demandes-res').innerHTML = '<div class="alerte">Cochez au moins une pièce.</div>'; return; }
+    try {
+      const d = await appelDem('preparer', pieces);
+      let hh = d.demandes.map((q) => '<div class="carte" style="margin:8px 0;padding:12px">'
+        + '<b>' + e(q.titre) + '</b> <span class="att">— objet : ' + e(q.objet) + '</span>'
+        + '<pre style="white-space:pre-wrap;font-family:inherit;color:#fff;font-size:13px">' + e(q.corps) + '</pre>'
+        + '<button class="sec copier" data-corps="' + e(q.corps) + '">Copier le texte</button> '
+        + '<a href="mailto:?subject=' + encodeURIComponent(q.objet) + '&body=' + encodeURIComponent(q.corps) + '" style="margin-left:8px">Ouvrir dans le courrielleur</a>'
+        + '</div>').join('');
+      if (d.ecartees.length) hh += '<p class="att">Non rédigées : ' + d.ecartees.map((x) => e(x.libelle) + ' (' + e(x.motif) + ')').join(' · ') + '</p>';
+      hh += '<p><button id="marquer">Marquer comme demandées — une fois envoyées</button></p>';
+      $('#demandes-res').innerHTML = hh;
+      $('#demandes-res').querySelectorAll('.copier').forEach((b) => b.addEventListener('click', async () => {
+        try { await navigator.clipboard.writeText(b.dataset.corps); b.textContent = 'Copié ✓'; } catch (err) { /* le texte est affiché juste au-dessus */ }
+      }));
+      $('#marquer').addEventListener('click', async () => {
+        try { await appelDem('marquer', pieces); await afficherEtat(ref); }
+        catch (err) { window.alert(err.message); }
+      });
+    } catch (err) { $('#demandes-res').innerHTML = '<div class="alerte">' + e(err.message) + '</div>'; }
+  });
+  $('#saisir').addEventListener('click', async () => {
+    const pieces = cochees('etat_hypothecaire');
+    if (!pieces.length) { $('#demandes-res').innerHTML = '<div class="alerte">Cochez l\'état hypothécaire.</div>'; return; }
+    if (!window.confirm('Confirmer que l\'état hypothécaire a été saisi dans le logiciel métier ?')) return;
+    try { await appelDem('saisir', pieces); await afficherEtat(ref); }
+    catch (err) { $('#demandes-res').innerHTML = '<div class="alerte">' + e(err.message) + '</div>'; }
+  });
 
   // Levée d'une réserve. Le collaborateur lève seul ; le motif est
   // obligatoire et journalisé ; les réserves sous code demandent le code

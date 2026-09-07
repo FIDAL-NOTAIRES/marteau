@@ -28,6 +28,7 @@ appelle PAINT en interne. Un seul constructeur de polygone.
 | Levée de réserve (`api/lever.js`) | motif obligatoire et journalisé ; sous code (`MARTEAU_CODE_LEVEE`) pour validation associé / DVF / état hypothécaire, imputée à l'associé en charge |
 | Bibliothèque (`lib/phrases.js`) | les blocs de phrases des dix familles, codifiés — LA source, la base ne garde que le code |
 | Analyse (`api/analyser.js`) | calcule les voyants des dix familles depuis la base seule ; recalculable ; aujourd'hui : identité (dénominations), désignation, nature du droit (famille 5), le reste en jaune motivé |
+| Demandes (`api/demander.js`) | préparer (rédige par destinataire, n'écrit rien) / marquer (date, 15 jours, journal) / saisir (état hypothécaire). MARTEAU rédige, le collaborateur envoie — aucun mail ne part de la machine (§ 10.4). Mairies : brique séparée |
 | État (`api/etat.js`) | lecture seule d'un dossier : jauges réelles, réserves, sociétés, journal chaîné — l'écran qui survit au rechargement |
 | Reste des sources | à brancher |
 | Rendu du rapport | non commencé |

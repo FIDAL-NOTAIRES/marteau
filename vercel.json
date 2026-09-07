@@ -33,6 +33,9 @@
     },
     "api/analyser.js": {
       "maxDuration": 30
+    },
+    "api/demander.js": {
+      "maxDuration": 30
     }
   }
 }
