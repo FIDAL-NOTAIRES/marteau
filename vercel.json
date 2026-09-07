@@ -16,9 +16,6 @@
     "api/collecter.js": {
       "maxDuration": 60
     },
-    "api/reprise.js": {
-      "maxDuration": 60
-    },
     "api/sante.js": {
       "maxDuration": 30
     },

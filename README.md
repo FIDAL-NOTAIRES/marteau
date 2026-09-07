@@ -48,6 +48,14 @@ appelle PAINT en interne. Un seul constructeur de polygone.
 
 ## Pièges connus
 
+* **PLAN HOBBY : DOUZE fonctions par déploiement, pas une de plus.** La
+  treizième fait échouer le build à « Deploying outputs », sans message
+  utile. `api/reprise.js` a été fusionné dans `collecter.js`
+  (`action: 'reprise'`) pour libérer une place. Toute brique suivante
+  doit soit regrouper des routes existantes (dossier / lever / demander /
+  etat pourraient devenir un seul `api/dossier.js` à actions), soit
+  passer le projet en Pro.
+
 * **Toute fonction absente de `vercel.json` rend 404.** Vérifié sur
   REDPAR, retenu ici.
 * La base est **partagée**. Les tables sans préfixe appartiennent à
