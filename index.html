@@ -581,6 +581,18 @@ async function afficherEtat(ref) {
           : '<button class="sec lever" data-code="' + e(x.code) + '" data-souscode="' + (x.levee_sous_code ? '1' : '') + '">Lever</button>') + '</td></tr>').join('')
     + '</tbody></table>';
 
+  const STATUT = { demandable: 'à demander', a_saisir: 'à saisir au logiciel métier', demandee: 'demandée', relancee: 'relancée',
+    saisie: 'saisie', recu_a_analyser: 'reçu — à analyser', recue: 'reçue', analyse: 'analysé' };
+  const DEST = { client: 'client', mairie: 'mairie', publicite_fonciere: 'publicité foncière', prefecture_ars: 'préfecture / ARS', expert_comptable: 'expert-comptable' };
+  h += '<h3 style="font-size:15px;margin:16px 0 6px">Registre des pièces — ' + n(jp.demandables || 0) + ' à demander, ' + n(jp.demandees) + ' demandée(s), ' + n(jp.recues) + ' reçue(s)</h3>'
+    + '<table><thead><tr><th>Fam.</th><th>Pièce</th><th>Destinataire</th><th>Statut</th></tr></thead><tbody>'
+    + (d.registre || []).map((x) => '<tr' + (['recue','analyse'].includes(x.statut) ? ' class="off"' : '') + '>'
+      + '<td>' + x.famille + '</td><td>' + e(x.libelle) + '</td>'
+      + '<td>' + e(DEST[x.destinataire_type] || x.destinataire_type || '—') + '</td>'
+      + '<td>' + e(STATUT[x.statut] || x.statut) + '</td></tr>').join('')
+    + '</tbody></table>'
+    + '<p class="att" style="margin:6px 0 0">Les pièces « à demander » sont déduites des voyants jaunes. Le K-bis n\'y figure pas : l\'étude le demande elle-même.</p>';
+
   h += '<h3 style="font-size:15px;margin:16px 0 6px">Sociétés du périmètre — ' + n(d.parcelles.total) + ' parcelles sur ' + n(d.parcelles.communes) + ' communes</h3>'
     + '<table><thead><tr><th>SIREN</th><th>Dénomination</th><th>Niveau</th><th>Confiance</th><th>Collecte</th></tr></thead><tbody>'
     + d.societes.map((x) => '<tr><td>' + e(x.siren) + '</td><td>' + e(x.denomination || '—') + role(x) + '</td>'
