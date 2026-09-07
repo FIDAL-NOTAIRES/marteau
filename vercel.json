@@ -24,6 +24,9 @@
     },
     "api/dossier.js": {
       "maxDuration": 30
+    },
+    "api/etat.js": {
+      "maxDuration": 30
     }
   }
 }

@@ -25,6 +25,7 @@ appelle PAINT en interne. Un seul constructeur de polygone.
 | Sources (`api/photo.js`, `api/liens.js`, `api/matrice.js`) | écrites le 01/09, sans état — REDPAR, BODACC, raccord MATRICE |
 | Ouverture (`api/dossier.js`) | crée le dossier, référence AAAA-NNNN, réserve systématique, première ligne du journal |
 | Persistance (`api/collecter.js`) | écrit ce que les deux volets rendent |
+| État (`api/etat.js`) | lecture seule d'un dossier : jauges réelles, réserves, sociétés, journal chaîné — l'écran qui survit au rechargement |
 | Reste des sources | à brancher |
 | Rendu du rapport | non commencé |
 
