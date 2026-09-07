@@ -36,6 +36,9 @@
     },
     "api/demander.js": {
       "maxDuration": 30
+    },
+    "api/reunion.js": {
+      "maxDuration": 30
     }
   }
 }

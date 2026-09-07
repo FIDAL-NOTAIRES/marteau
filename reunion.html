@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MARTEAU — note de réunion</title>
+<style>
+  :root{--nuit:#0F2238;--canard:#33838B;--orange:#FF982D;--carmin:#A01040;--gris:#8A94A0;--bord:#DDE3E9;--jaune:#FFC900}
+  body{margin:0;color:var(--nuit);font-family:"Segoe UI",Segoe,system-ui,sans-serif;font-size:13px;line-height:1.5;background:#fff}
+  h1,h2,h3{font-family:Georgia,"Times New Roman",serif;font-weight:normal;margin:0}
+  main{max-width:900px;margin:0 auto;padding:28px 32px 60px}
+  .garde{border-bottom:2px solid var(--nuit);padding-bottom:18px;margin-bottom:24px}
+  .garde h1{font-size:26px}
+  .garde .date{font-size:18px;margin-top:4px}
+  .garde .att{color:var(--gris);font-size:12px;margin-top:6px}
+  .garde ol{margin:14px 0 0;padding-left:20px}
+  .dossier{page-break-inside:avoid;border:1px solid var(--bord);border-radius:4px;padding:16px 18px;margin-bottom:18px}
+  .dossier h2{font-size:18px;margin-bottom:2px}
+  .dossier .sous{color:var(--gris);font-size:12px;margin-bottom:10px}
+  h3{font-size:14px;margin:14px 0 6px;text-transform:uppercase;letter-spacing:.5px;color:var(--gris)}
+  table{width:100%;border-collapse:collapse}
+  th{text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--gris);border-bottom:1px solid var(--bord);padding:5px 6px}
+  td{border-bottom:1px solid var(--bord);padding:5px 6px;vertical-align:top}
+  td.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+  .past{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:5px;vertical-align:-1px}
+  .p-orange{background:var(--orange)} .p-carmin{background:var(--carmin)} .p-canard{background:var(--canard)} .p-jaune{background:var(--jaune)}
+  .alerte{background:#FCEEF1;border-left:4px solid var(--carmin);padding:8px 12px;margin:6px 0;font-size:12px}
+  .relance{color:var(--carmin);font-weight:600}
+  .vide{color:var(--gris);font-style:italic}
+  .outils{text-align:right;margin-bottom:12px}
+  .outils button{background:var(--canard);color:#fff;border:0;border-radius:3px;padding:8px 14px;font-family:inherit;cursor:pointer}
+  footer{color:var(--gris);font-size:11px;margin-top:30px;border-top:1px solid var(--bord);padding-top:10px}
+  @media print{.outils{display:none} main{padding:0} .dossier{border:0;border-top:1px solid var(--bord);border-radius:0}}
+</style>
+</head>
+<body>
+<main>
+  <div class="outils"><button onclick="window.print()">Imprimer / PDF</button></div>
+  <div id="contenu"><p class="vide">Génération de la note…</p></div>
+  <footer id="pied"></footer>
+</main>
+<script>
+const e = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const dateFr = (iso) => new Date(iso + (iso.length === 10 ? 'T12:00:00' : '')).toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+const DEST = { client: 'client', mairie: 'mairie', publicite_fonciere: 'publicité foncière', prefecture_ars: 'préfecture / ARS', expert_comptable: 'expert-comptable' };
+
+function tablePieces(liste) {
+  if (!liste.length) return '<p class="vide">aucune</p>';
+  return '<table><thead><tr><th>Fam.</th><th>Pièce</th><th>Destinataire</th><th>Statut</th><th class="num">Attente</th><th>Relances</th></tr></thead><tbody>'
+    + liste.map((p) => '<tr><td>' + p.famille + '</td><td>' + e(p.libelle) + '</td><td>' + e(DEST[p.destinataire] || p.destinataire || '—') + '</td>'
+      + '<td>' + e(p.statut) + '</td><td class="num">' + (p.jours == null ? '—' : p.jours + ' j') + '</td>'
+      + '<td>' + (p.relances || 0) + (p.relance_proposee ? ' <span class="relance">— relance proposée</span>' : '') + '</td></tr>').join('')
+    + '</tbody></table>';
+}
+
+(async () => {
+  const r = await fetch('/api/reunion');
+  const d = await r.json();
+  if (!r.ok) { document.getElementById('contenu').innerHTML = '<div class="alerte">' + e(d.erreur) + '</div>'; return; }
+
+  let h = '<div class="garde"><h1>MARTEAU — point d\'équipe</h1>'
+    + '<div class="date">Réunion du ' + e(dateFr(d.reunion_le)) + '</div>'
+    + '<div class="att">Points en attente depuis le dernier point (' + e(dateFr(d.depuis_le)) + '). Les relances sont proposées, elles se déclenchent d\'un clic dans le dossier.</div>';
+  h += d.garde.length
+    ? '<ol>' + d.garde.map((g) => '<li><b>' + e(g.reference) + '</b> — ' + e(g.denomination || '') + ' <b>(' + g.points + ')</b></li>').join('') + '</ol>'
+    : '<p class="vide">Aucun point en attente sur les dossiers ouverts.</p>';
+  h += '</div>';
+
+  for (const s of d.dossiers) {
+    h += '<section class="dossier"><h2>' + e(s.reference) + ' — ' + e(s.denomination || s.siren) + '</h2>'
+      + '<div class="sous">Associé ' + e(s.associe) + (s.collaborateur ? ' · collaborateur ' + e(s.collaborateur) : '') + ' · ' + s.points + ' point(s)</div>';
+    for (const a of s.alertes) h += '<div class="alerte"><b>' + e(a.libelle) + '</b> — ' + e(a.motif) + '</div>';
+    h += '<h3>En attente depuis plus de 15 jours</h3>' + tablePieces(s.plus_15);
+    h += '<h3>En attente depuis moins de 15 jours</h3>' + tablePieces(s.moins_15);
+    h += '<h3>Réserves levées depuis le dernier point</h3>';
+    h += s.reserves_levees.length
+      ? '<table><thead><tr><th>Réserve</th><th>Levée par</th><th>Motif</th><th>Le</th></tr></thead><tbody>'
+        + s.reserves_levees.map((x) => '<tr><td><span class="past p-canard"></span>' + e(x.libelle) + (x.sous_code ? ' (sous code)' : '') + '</td><td>' + e(x.levee_par) + '</td><td>' + e(x.motif) + '</td><td>' + new Date(x.le).toLocaleDateString('fr-FR') + '</td></tr>').join('')
+        + '</tbody></table>'
+      : '<p class="vide">aucune</p>';
+    h += '<h3>Réserves encore ouvertes</h3>';
+    h += s.reserves_ouvertes.length
+      ? '<ul style="margin:0;padding-left:18px">' + s.reserves_ouvertes.map((x) => '<li><span class="past p-orange"></span>' + e(x.libelle) + (x.sous_code ? ' <span style="color:var(--gris)">(sous code)</span>' : '') + '</li>').join('') + '</ul>'
+      : '<p class="vide">aucune — le définitif est possible</p>';
+    h += '</section>';
+  }
+
+  document.getElementById('contenu').innerHTML = h;
+  document.getElementById('pied').textContent = 'Généré automatiquement le ' + new Date(d.genere_le).toLocaleString('fr-FR') + ' — MARTEAU. Document interne, ne se transmet pas au client.';
+})();
+</script>
+</body>
+</html>
