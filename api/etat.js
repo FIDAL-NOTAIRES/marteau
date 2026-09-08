@@ -27,7 +27,8 @@ export default async function handler(req, res) {
 
     const societes = await sql`
       SELECT siren, denomination, niveau, niveau_confiance, role_fusion,
-             origine, sources_bodacc, collecte_complete, denominations_anterieures
+             origine, sources_bodacc, collecte_complete, denominations_anterieures,
+             etat_administratif, creee_le, siege_registre, dirigeants
         FROM marteau_societe WHERE dossier_id = ${d.id}
        ORDER BY niveau, siren
     `;

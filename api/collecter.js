@@ -206,6 +206,33 @@ export default async function handler(req, res) {
       }
     }
 
+    // ----------------------------------------- le registre des entreprises
+    // Pour chaque société du périmètre, on lit l'annuaire officiel (le même
+    // que l'étape de vérification SIREN) et on garde ce qui fonde la
+    // famille 1 : état administratif, création, siège, nature, dirigeants.
+    // Une société cessée doit se voir dans l'analyse, pas seulement sur
+    // une carte au moment du choix.
+    const sirens = await sql`SELECT siren FROM marteau_societe WHERE dossier_id = ${d.id}`;
+    let registres = 0;
+    for (const { siren } of sirens) {
+      const v = await appelBorne('registre', notre('/api/entreprises', { q: siren }));
+      if (v.statut !== 'ok') continue;
+      const fiche = (v.donnees.entreprises ?? []).find((x) => x.siren === siren);
+      if (!fiche) continue;
+      await sql`
+        UPDATE marteau_societe
+           SET etat_administratif = ${fiche.active ? 'active' : 'cessee'},
+               creee_le = ${fiche.creee_le ?? null},
+               siege_registre = ${fiche.siege ?? null},
+               nature_juridique = ${fiche.nature_juridique ?? null},
+               dirigeants = ${JSON.stringify(fiche.dirigeants ?? [])}::jsonb,
+               registre_lu_le = now(),
+               denomination = coalesce(denomination, ${fiche.denomination ?? null})
+         WHERE dossier_id = ${d.id} AND siren = ${siren}
+      `;
+      registres += 1;
+    }
+
     // Le drapeau de collecte complète : posé quand les deux volets ont
     // répondu. Il pilote la couleur canard de la société sur l'organigramme.
     if (vPhoto.statut === 'ok' && vLiens.statut === 'ok') {
@@ -217,7 +244,7 @@ export default async function handler(req, res) {
 
     await journaliser(d.id, qui, 'collecte lancée', {
       photo: vPhoto.statut, liens: vLiens.statut,
-      parcelles: parcellesEcrites, societes: societesEcrites,
+      parcelles: parcellesEcrites, societes: societesEcrites, registres,
     });
 
     const [{ tete }] = await sql`SELECT marteau_journal_tete() AS tete`;

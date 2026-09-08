@@ -37,8 +37,12 @@ export default async function handler(req, res) {
     const refId = (fam, code) => refs.find((r) => r.famille === fam && r.code === code)?.id;
 
     const [tete] = await sql`
-      SELECT denominations_anterieures FROM marteau_societe
+      SELECT denominations_anterieures, etat_administratif FROM marteau_societe
        WHERE dossier_id = ${d.id} AND siren = ${d.siren_tete}
+    `;
+    const [absorbante] = await sql`
+      SELECT siren, denomination FROM marteau_societe
+       WHERE dossier_id = ${d.id} AND role_fusion = 'absorbante' ORDER BY id LIMIT 1
     `;
     const [parc] = await sql`
       SELECT count(*)::int AS total, count(DISTINCT commune_insee)::int AS communes,
@@ -57,6 +61,13 @@ export default async function handler(req, res) {
 
     // 1. identité — le K-bis est demandé par l'étude, jamais au client.
     poser('identite_attente', { date: aujourdhui() });
+    // Société auditée CESSÉE au registre : au moins orange. Si le BODACC a
+    // désigné une absorbante, c'est la discordance du mémo — le vendeur au
+    // titre n'est plus la société immatriculée — donc carmin.
+    if (tete?.etat_administratif === 'cessee') {
+      if (absorbante) poser('identite_absorbee', { absorbante: absorbante.denomination ?? '', siren: absorbante.siren });
+      else poser('identite_cessee');
+    }
     // Dénominations distinctes — comparées SANS AUCUNE ESPACE : le BODACC
     // porte des coquilles (« A LO YER MODERE ») qui feraient compter deux
     // fois le même nom. On garde la graphie la plus fréquente pour l'affichage.

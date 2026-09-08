@@ -652,8 +652,10 @@ async function afficherEtat(ref) {
     + 'MARTEAU rédige, le collaborateur envoie depuis sa boîte — aucun mail ne part de la machine. Les demandes aux mairies partent commune par commune, brique séparée.</p>';
 
   h += '<h3 style="font-size:15px;margin:16px 0 6px">Sociétés du périmètre — ' + n(d.parcelles.total) + ' parcelles sur ' + n(d.parcelles.communes) + ' communes</h3>'
-    + '<table><thead><tr><th>SIREN</th><th>Dénomination</th><th>Niveau</th><th>Confiance</th><th>Collecte</th></tr></thead><tbody>'
-    + d.societes.map((x) => '<tr><td>' + e(x.siren) + '</td><td>' + e(x.denomination || '—') + role(x) + '</td>'
+    + '<table><thead><tr><th>SIREN</th><th>Dénomination</th><th>Registre</th><th>Niveau</th><th>Confiance</th><th>Collecte</th></tr></thead><tbody>'
+    + d.societes.map((x) => '<tr><td>' + e(x.siren) + '</td><td>' + e(x.denomination || '—') + role(x)
+      + (x.siege_registre ? '<div class="att">' + e(x.siege_registre) + (x.creee_le ? ' · créée le ' + new Date(x.creee_le).toLocaleDateString('fr-FR') : '') + '</div>' : '') + '</td>'
+      + '<td>' + (x.etat_administratif === 'cessee' ? '<span class="badge ko">Cessée</span>' : x.etat_administratif === 'active' ? '<span class="badge ok">Active</span>' : '<span class="att">—</span>') + '</td>'
       + '<td>' + (x.niveau === 0 ? 'tête' : 'liée') + '</td><td>' + confiance(x) + '</td>'
       + '<td>' + (x.collecte_complete ? 'complète' : 'en cours') + '</td></tr>').join('')
     + '</tbody></table>';

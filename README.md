@@ -20,7 +20,7 @@ appelle PAINT en interne. Un seul constructeur de polygone.
 
 | Brique | État |
 |---|---|
-| Modèle de données (`sql/001` à `007`) | 001–006 appliquées ; **007 à appliquer** (droit par parcelle) |
+| Modèle de données (`sql/001` à `008`) | 001–007 appliquées ; **008 à appliquer** (état administratif au registre) |
 | Façade (`index.html`) | écrite le 01/09 — accroche large, carte Leaflet/IGN, validation du périmètre ; **familles et couleurs en retard sur le mémo** |
 | Vérification SIREN (`api/entreprises.js`) | reprise de REDPAR : annuaire officiel des entreprises (gouv.fr), une carte par société — siège, création, APE, dirigeants — à choisir avant toute photographie. La machine propose, l'humain décide |
 | Sources (`api/photo.js`, `api/liens.js`, `api/matrice.js`) | écrites le 01/09, sans état — REDPAR, BODACC, raccord MATRICE |
