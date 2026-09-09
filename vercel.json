@@ -40,5 +40,11 @@
     "api/entreprises.js": {
       "maxDuration": 30
     }
-  }
+  },
+  "crons": [
+    {
+      "path": "/api/collecter",
+      "schedule": "0 3 * * *"
+    }
+  ]
 }
