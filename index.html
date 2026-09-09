@@ -633,13 +633,19 @@ async function afficherEtat(ref) {
     saisie: 'saisie', recu_a_analyser: 'reçu — à analyser', recue: 'reçue', analyse: 'analysé' };
   const DEST = { client: 'client', mairie: 'mairie', publicite_fonciere: 'publicité foncière', prefecture_ars: 'préfecture / ARS', expert_comptable: 'expert-comptable' };
   h += '<h3 style="font-size:15px;margin:16px 0 6px">Registre des pièces — ' + n(jp.demandables || 0) + ' à demander, ' + n(jp.demandees) + ' demandée(s), ' + n(jp.recues) + ' reçue(s)</h3>'
-    + '<table id="registre"><thead><tr><th style="width:28px"></th><th>Fam.</th><th>Pièce</th><th>Destinataire</th><th>Statut</th><th>Depuis</th></tr></thead><tbody>'
+    + '<table id="registre"><thead><tr><th style="width:28px"></th><th>Fam.</th><th>Pièce</th><th>Rangement</th><th>Destinataire</th><th>Statut</th><th>Depuis</th></tr></thead><tbody>'
     + (d.registre || []).map((x) => {
         const cochable = x.statut === 'demandable' || x.statut === 'a_saisir';
         const jours = x.premier_envoi_le ? Math.floor((Date.now() - new Date(x.premier_envoi_le)) / 86400000) : null;
         return '<tr' + (['recue','analyse'].includes(x.statut) ? ' class="off"' : '') + '>'
           + '<td>' + (cochable ? '<input type="checkbox" class="ckp" data-id="' + x.id + '" data-nature="' + e(x.nature) + '" checked>' : '') + '</td>'
           + '<td>' + x.famille + '</td><td>' + e(x.libelle) + '</td>'
+          // Le code documentaire et sa sous-famille. Le chemin Drive complet
+          // est en infobulle : la colonne resterait illisible sinon.
+          + '<td>' + (x.code_doc
+              ? '<span title="' + e((x.chemin || []).join(' / ')) + '"><strong>' + e(x.code_doc) + '</strong>'
+                + (x.sous_famille ? '<div class="att">' + e(x.sous_famille) + '</div>' : '') + '</span>'
+              : '<span class="att">—</span>') + '</td>'
           + '<td>' + e(DEST[x.destinataire_type] || x.destinataire_type || '—') + '</td>'
           + '<td>' + e(STATUT[x.statut] || x.statut) + '</td>'
           + '<td>' + (jours == null ? '—' : jours + ' j' + (jours > 15 ? ' <span class="past p-orange"></span>' : '')) + '</td></tr>';
