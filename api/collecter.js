@@ -1,4 +1,4 @@
-// MARTEAU — POST /api/collecter
+// MARTEAU — POST /api/collecter (et GET pour le cron de reprise)
 //
 // COUCHE DE PERSISTANCE. Elle n'interroge aucune source externe : elle
 // appelle nos propres /api/photo et /api/liens, écrits le 1er septembre,
@@ -38,13 +38,18 @@ const notre = (chemin, params) => async (signal) => {
 // Reprise des appels en souffrance (3e tentative), fusionnée ici depuis
 // api/reprise.js le 07/09/2026 : le plan Hobby de Vercel plafonne à DOUZE
 // fonctions par déploiement, et la treizième a fait échouer deux builds.
-// Appelée par POST { action: 'reprise' } — à la main ou à l'ouverture du
-// dossier ; le cron était de toute façon refusé sur ce plan.
+//
+// Trois déclencheurs (mémo v4 § 11) : à la main, à l'ouverture du
+// dossier — tous deux par POST { action: 'reprise' } —, et le CRON
+// QUOTIDIEN vers 3 h, qui passe par GET (voir le handler).
+//
+// L'authentification ne vit plus ici mais dans le handler, et pour une
+// raison précise : elle ne doit s'appliquer QU'AU GET. La garde
+// précédente était posée dans cette fonction, donc commune aux deux
+// chemins — poser CRON_SECRET aurait fait rendre 401 à la façade, qui
+// appelle en POST depuis un navigateur et ne peut évidemment pas porter
+// le secret.
 async function reprise(req, res) {
-  if (process.env.CRON_SECRET
-      && req.headers.authorization !== `Bearer ${process.env.CRON_SECRET}`) {
-    return res.status(401).json({ erreur: 'non autorisé' });
-  }
   const sql = db();
   const enSouffrance = await sql`
     SELECT a.id, a.source, a.tentatives, a.dossier_id, d.siren_tete AS siren
@@ -71,6 +76,31 @@ async function reprise(req, res) {
 }
 
 export default async function handler(req, res) {
+  // ------------------------------------------------------- le cron
+  // Un cron Vercel appelle en GET et ne porte AUCUN corps de requête :
+  // c'est la seule raison d'accepter autre chose que POST ici. Branché
+  // sur le POST, il aurait rendu 405 toutes les nuits, en silence.
+  //
+  // Vercel joint automatiquement `Authorization: Bearer $CRON_SECRET`
+  // dès que la variable est posée sur le projet.
+  //
+  // GARDE FERMÉE PAR DÉFAUT : variable absente = 401, et non passage
+  // libre. C'est l'inverse de l'écriture précédente
+  // (`if (process.env.CRON_SECRET && …)`), qui laissait la reprise
+  // ouverte à qui trouvait l'URL — la protection de déploiement étant
+  // désactivée sur ce projet, l'URL suffisait.
+  if (req.method === 'GET') {
+    const attendu = process.env.CRON_SECRET;
+    if (!attendu || req.headers.authorization !== `Bearer ${attendu}`) {
+      return res.status(401).json({ erreur: 'non autorisé' });
+    }
+    try { return await reprise(req, res); }
+    catch (e) {
+      console.error('[MARTEAU] reprise (cron)', e);
+      return res.status(500).json({ erreur: e.message });
+    }
+  }
+
   if (req.method !== 'POST') return res.status(405).json({ erreur: 'POST attendu' });
 
   if (req.body?.action === 'reprise') {
