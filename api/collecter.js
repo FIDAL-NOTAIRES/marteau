@@ -63,42 +63,82 @@ const notre = (chemin, params) => async (signal) => {
 // reste à faire.
 const BUDGET_MS = 40_000;
 
+// Nombre de parcelles écrites par instruction. Voir `ecrireParcelles`.
+const PAQUET = 200;
+
 // --------------------------------------------------------------- écriture
 
-// Les parcelles d'une société, commune par commune. `photo.js` plafonne
-// son détail à 600 par commune et le signale par `tronque` : on écrit ce
-// qu'on a reçu, et le drapeau part au rapport — surtout pas un total
-// silencieusement amputé.
+// Les parcelles d'une société. `photo.js` plafonne son détail à 600 par
+// commune et le signale par `tronque` : on écrit ce qu'on a reçu, et le
+// drapeau part au rapport — surtout pas un total silencieusement amputé.
 //
-// MANQUE CONNU (09/09/2026) : l'arbitrage du 08/09 veut qu'on STOCKE
-// AUSSI les communes n'ayant que du bâti et des lots de copropriété,
-// donc sans aucune parcelle au nom de la société — c'était la cause de
-// l'écart 47/48 communes entre la base et la façade. Il n'existe aucune
-// table pour les recevoir : `marteau_commune` n'est pas dans le schéma.
-// Cela demande une migration, elle n'est pas faite, et une commune sans
+// ÉCRITURE PAR PAQUETS (09/09/2026). Ce code faisait un INSERT par
+// parcelle, en série. Tenable sur les 1 636 parcelles d'une tête seule ;
+// intenable dès que la descente sur les filiales s'y ajoute — le cas
+// réel est 1 636 + 2 192, soit près de 3 800 allers-retours Neon dans
+// une invocation plafonnée à 60 s. On passe par `unnest`, deux cents
+// lignes par instruction : une vingtaine d'allers-retours au lieu de
+// 3 800.
+//
+// DÉDUPLICATION OBLIGATOIRE avant l'envoi. Postgres refuse qu'un
+// ON CONFLICT DO UPDATE touche deux fois la même ligne dans une seule
+// instruction : deux occurrences d'une même référence cadastrale dans un
+// paquet feraient échouer tout le paquet. La boucle ligne à ligne
+// absorbait ce cas sans qu'on le sache.
+//
+// MANQUE CONNU : l'arbitrage du 08/09 veut qu'on STOCKE AUSSI les
+// communes n'ayant que du bâti et des lots de copropriété, donc sans
+// aucune parcelle au nom de la société — c'était la cause de l'écart
+// 47/48 communes entre la base et la façade. Il n'existe aucune table
+// pour les recevoir : `marteau_commune` n'est pas dans le schéma. Cela
+// demande une migration, elle n'est pas faite, et une commune sans
 // parcelle est donc toujours perdue ici.
 async function ecrireParcelles(sql, dossierId, siren, payload, origine) {
-  let ecrites = 0;
+  // À plat, et dédoublonné par référence cadastrale. La boucle par
+  // commune ne sert qu'à reporter le code INSEE et le nom sur chaque
+  // parcelle.
+  const par_ref = new Map();
   for (const c of payload.communes ?? []) {
     for (const par of c.parcelles ?? []) {
-      await sql`
-        INSERT INTO marteau_parcelle
-          (dossier_id, code_parcelle, commune_insee, commune_nom,
-           siren_proprietaire, origine, a_confirmer,
-           droit, nature, contenance, adresse)
-        VALUES
-          (${dossierId}, ${par.ref}, ${c.code_insee}, ${c.nom_commune},
-           ${siren}, ${origine}, false,
-           ${par.droit || null}, ${par.nature || null},
-           ${par.contenance ?? null}, ${par.adresse || null})
-        ON CONFLICT (dossier_id, code_parcelle) DO UPDATE
-           SET droit = EXCLUDED.droit, nature = EXCLUDED.nature,
-               contenance = EXCLUDED.contenance, adresse = EXCLUDED.adresse
-      `;
-      ecrites += 1;
+      if (!par?.ref) continue;
+      par_ref.set(par.ref, {
+        ref: par.ref,
+        insee: c.code_insee,
+        nom: c.nom_commune,
+        droit: par.droit || null,
+        nature: par.nature || null,
+        contenance: par.contenance ?? null,
+        adresse: par.adresse || null,
+      });
     }
   }
-  return ecrites;
+  const lignes = [...par_ref.values()];
+
+  for (let i = 0; i < lignes.length; i += PAQUET) {
+    const p = lignes.slice(i, i + PAQUET);
+    await sql`
+      INSERT INTO marteau_parcelle
+        (dossier_id, code_parcelle, commune_insee, commune_nom,
+         siren_proprietaire, origine, a_confirmer,
+         droit, nature, contenance, adresse)
+      SELECT ${dossierId}, t.ref, t.insee, t.nom,
+             ${siren}, ${origine}, false,
+             t.droit, t.nature, t.contenance, t.adresse
+        FROM unnest(
+               ${p.map((x) => x.ref)}::text[],
+               ${p.map((x) => x.insee)}::text[],
+               ${p.map((x) => x.nom)}::text[],
+               ${p.map((x) => x.droit)}::text[],
+               ${p.map((x) => x.nature)}::text[],
+               ${p.map((x) => x.contenance)}::numeric[],
+               ${p.map((x) => x.adresse)}::text[]
+             ) AS t(ref, insee, nom, droit, nature, contenance, adresse)
+      ON CONFLICT (dossier_id, code_parcelle) DO UPDATE
+         SET droit = EXCLUDED.droit, nature = EXCLUDED.nature,
+             contenance = EXCLUDED.contenance, adresse = EXCLUDED.adresse
+    `;
+  }
+  return lignes.length;
 }
 
 // Ce que le registre national fonde : l'état administratif, la création,
