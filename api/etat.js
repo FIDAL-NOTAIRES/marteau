@@ -9,6 +9,7 @@
 // leur niveau de confiance, et la queue du journal chaîné avec son état.
 
 import { db } from '../lib/db.js';
+import { sousFamille, cheminDrive } from '../lib/nomenclature.js';
 import { rendre } from '../lib/phrases.js';
 
 export default async function handler(req, res) {
@@ -55,11 +56,22 @@ export default async function handler(req, res) {
              count(*) FILTER (WHERE statut IN ('demandable','a_saisir'))::int AS demandables
         FROM marteau_piece WHERE dossier_id = ${d.id}
     `;
-    const registre = await sql`
-      SELECT id, famille, libelle, nature, destinataire_type, statut, premier_envoi_le, relances, depose_le
+    // Le rangement documentaire accompagne chaque pièce : le code est en
+    // base (colonne code_doc, migration 009), le libellé de sous-famille
+    // et le chemin Drive se DÉDUISENT de lib/nomenclature.js. Rien de
+    // tout cela n'est stocké deux fois. `code_doc` est nul sur les pièces
+    // créées avant le 09/09/2026 : la nomenclature ne vaut que pour
+    // l'avenir, et le registre doit rester lisible dans ce cas.
+    const registre = (await sql`
+      SELECT id, famille, libelle, nature, destinataire_type, statut,
+             premier_envoi_le, relances, depose_le, code_doc
         FROM marteau_piece WHERE dossier_id = ${d.id}
        ORDER BY famille, id
-    `;
+    `).map((x) => ({
+      ...x,
+      sous_famille: x.code_doc ? (sousFamille(x.code_doc)?.libelle ?? null) : null,
+      chemin: x.code_doc ? cheminDrive(x.code_doc) : null,
+    }));
 
     const journal = await sql`
       SELECT id, le, qui, quoi, detail, empreinte

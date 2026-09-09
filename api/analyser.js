@@ -106,7 +106,11 @@ export default async function handler(req, res) {
     // 6. urbanisme — trois volets en attente ; assurance sans travaux connus.
     poser('urba_attente', { date: aujourdhui() });
     poser('zone_attente');
-    poser('assurance_attente');
+    // Pas `assurance_attente` : elle affirmerait des travaux relevés,
+    // alors qu'aucune source d'autorisations n'est encore lue.
+    poser('assurance_non_verifie', {
+      raison: "le recensement des autorisations d'urbanisme n'est pas encore raccordé à MARTEAU",
+    });
 
     // 7. diagnostics — ADEME non encore branchée : on le dit.
     poser('diag_liste', { liste: 'liste calculée à venir — usage et arrêtés préfectoraux à déterminer' });

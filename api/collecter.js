@@ -1,8 +1,8 @@
 // MARTEAU — POST /api/collecter (et GET pour le cron de reprise)
 //
 // COUCHE DE PERSISTANCE. Elle n'interroge aucune source externe : elle
-// appelle nos propres /api/photo, /api/liens et /api/entreprises, et elle
-// écrit ce qu'ils rendent.
+// appelle nos propres /api/photo et /api/liens, écrits le 1er septembre,
+// et elle écrit ce qu'ils rendent.
 //
 // Pourquoi cette séparation. `photo.js` et `liens.js` sont SANS ÉTAT :
 // on peut les ouvrir dans un navigateur, les relire, les corriger sans
@@ -13,31 +13,9 @@
 // Conséquence à respecter : ce fichier ne doit JAMAIS appeler REDPAR ni
 // le BODACC directement. S'il le fait un jour, la logique existera en
 // deux endroits et divergera.
-//
-// ---------------------------------------------------------------------
-// Réécriture du 09/09/2026 — la collecte passe par `collecterSociete`
-//
-// Ce fichier appelait `appelBorne` et `enregistrer(…, null, …)` à la
-// main, donc avec `societe_id` à NULL, puis posait `collecte_complete`
-// sur le seul SIREN de tête. Trois conséquences, toutes corrigées ici :
-//
-//   • les FILIALES restaient jaunes indéfiniment sur l'organigramme,
-//     puisque rien ne posait leur drapeau ;
-//   • leurs PARCELLES n'étaient jamais photographiées — la descente du
-//     mémo § 4.4 (« MARTEAU appelle REDPAR sur chaque société
-//     détectée ») n'existait pas ;
-//   • le suivi par source ET PAR SOCIÉTÉ, que `marteau_appel.societe_id`
-//     permet, n'était pas alimenté : la reprise ne pouvait donc pas
-//     savoir quelle société rappeler.
-//
-// `lib/collecte.js` fait déjà tout cela. On l'utilise.
-// ---------------------------------------------------------------------
 
 import { db, journaliser } from '../lib/db.js';
-import {
-  collecterSociete, parLots, appelBorne,
-  PARALLELISME_REDPAR, TENTATIVES_MAX,
-} from '../lib/collecte.js';
+import { appelBorne, enregistrer, TENTATIVES_MAX } from '../lib/collecte.js';
 
 // En production, une fonction s'appelle elle-même par son domaine de
 // déploiement. VERCEL_URL le donne sans le protocole.
@@ -56,126 +34,7 @@ const notre = (chemin, params) => async (signal) => {
   return d;
 };
 
-// Budget de temps. Le plafond de la fonction est de 60 s ; on s'arrête à
-// 40 pour garder de quoi écrire et journaliser. Les sociétés non
-// traitées gardent `collecte_complete` à false et seront reprises au
-// prochain appel — c'est le drapeau, et non un curseur, qui porte le
-// reste à faire.
-const BUDGET_MS = 40_000;
-
-// Nombre de parcelles écrites par instruction. Voir `ecrireParcelles`.
-const PAQUET = 200;
-
-// --------------------------------------------------------------- écriture
-
-// Les parcelles d'une société. `photo.js` plafonne son détail à 600 par
-// commune et le signale par `tronque` : on écrit ce qu'on a reçu, et le
-// drapeau part au rapport — surtout pas un total silencieusement amputé.
-//
-// ÉCRITURE PAR PAQUETS (09/09/2026). Ce code faisait un INSERT par
-// parcelle, en série. Tenable sur les 1 636 parcelles d'une tête seule ;
-// intenable dès que la descente sur les filiales s'y ajoute — le cas
-// réel est 1 636 + 2 192, soit près de 3 800 allers-retours Neon dans
-// une invocation plafonnée à 60 s. On passe par `unnest`, deux cents
-// lignes par instruction : une vingtaine d'allers-retours au lieu de
-// 3 800.
-//
-// DÉDUPLICATION OBLIGATOIRE avant l'envoi. Postgres refuse qu'un
-// ON CONFLICT DO UPDATE touche deux fois la même ligne dans une seule
-// instruction : deux occurrences d'une même référence cadastrale dans un
-// paquet feraient échouer tout le paquet. La boucle ligne à ligne
-// absorbait ce cas sans qu'on le sache.
-//
-// MANQUE CONNU : l'arbitrage du 08/09 veut qu'on STOCKE AUSSI les
-// communes n'ayant que du bâti et des lots de copropriété, donc sans
-// aucune parcelle au nom de la société — c'était la cause de l'écart
-// 47/48 communes entre la base et la façade. Il n'existe aucune table
-// pour les recevoir : `marteau_commune` n'est pas dans le schéma. Cela
-// demande une migration, elle n'est pas faite, et une commune sans
-// parcelle est donc toujours perdue ici.
-async function ecrireParcelles(sql, dossierId, siren, payload, origine) {
-  // À plat, et dédoublonné par référence cadastrale. La boucle par
-  // commune ne sert qu'à reporter le code INSEE et le nom sur chaque
-  // parcelle.
-  const par_ref = new Map();
-  for (const c of payload.communes ?? []) {
-    for (const par of c.parcelles ?? []) {
-      if (!par?.ref) continue;
-      par_ref.set(par.ref, {
-        ref: par.ref,
-        insee: c.code_insee,
-        nom: c.nom_commune,
-        droit: par.droit || null,
-        nature: par.nature || null,
-        contenance: par.contenance ?? null,
-        adresse: par.adresse || null,
-      });
-    }
-  }
-  const lignes = [...par_ref.values()];
-
-  for (let i = 0; i < lignes.length; i += PAQUET) {
-    const p = lignes.slice(i, i + PAQUET);
-    await sql`
-      INSERT INTO marteau_parcelle
-        (dossier_id, code_parcelle, commune_insee, commune_nom,
-         siren_proprietaire, origine, a_confirmer,
-         droit, nature, contenance, adresse)
-      SELECT ${dossierId}, t.ref, t.insee, t.nom,
-             ${siren}, ${origine}, false,
-             t.droit, t.nature, t.contenance, t.adresse
-        FROM unnest(
-               ${p.map((x) => x.ref)}::text[],
-               ${p.map((x) => x.insee)}::text[],
-               ${p.map((x) => x.nom)}::text[],
-               ${p.map((x) => x.droit)}::text[],
-               ${p.map((x) => x.nature)}::text[],
-               ${p.map((x) => x.contenance)}::numeric[],
-               ${p.map((x) => x.adresse)}::text[]
-             ) AS t(ref, insee, nom, droit, nature, contenance, adresse)
-      ON CONFLICT (dossier_id, code_parcelle) DO UPDATE
-         SET droit = EXCLUDED.droit, nature = EXCLUDED.nature,
-             contenance = EXCLUDED.contenance, adresse = EXCLUDED.adresse
-    `;
-  }
-  return lignes.length;
-}
-
-// Ce que le registre national fonde : l'état administratif, la création,
-// le siège, la nature, les dirigeants. Une société cessée doit se voir
-// dans l'analyse (famille 1), pas seulement sur une carte au moment du
-// choix du SIREN.
-async function ecrireRegistre(sql, dossierId, siren, payload) {
-  const fiche = (payload.entreprises ?? []).find((x) => x.siren === siren);
-  if (!fiche) return false;
-  await sql`
-    UPDATE marteau_societe
-       SET etat_administratif = ${fiche.active ? 'active' : 'cessee'},
-           creee_le = ${fiche.creee_le ?? null},
-           siege_registre = ${fiche.siege ?? null},
-           nature_juridique = ${fiche.nature_juridique ?? null},
-           dirigeants = ${JSON.stringify(fiche.dirigeants ?? [])}::jsonb,
-           registre_lu_le = now(),
-           denomination = coalesce(denomination, ${fiche.denomination ?? null})
-     WHERE dossier_id = ${dossierId} AND siren = ${siren}
-  `;
-  return true;
-}
-
-// Le verdict d'une source, retrouvé par son NOM. `collecterSociete` les
-// rend dans l'ordre des sources, mais on ne s'appuie pas sur l'ordre :
-// un jour quelqu'un ajoutera une source au milieu.
-const verdict = (r, nom) => r.verdicts.find((v) => v.nom === nom);
-
-// PIÈGE À CONNAÎTRE : un verdict servi par le CACHE ne porte pas de
-// `donnees` (voir `depuisCache` dans lib/collecte.js). Aujourd'hui ni
-// 'photo' ni 'liens' ni 'registre' ne figurent dans CACHE_MS, donc le
-// cas ne se produit pas. Le jour où l'un d'eux y entre, les parcelles
-// cesseraient d'être écrites SANS AUCUNE ERREUR — d'où ce test explicite
-// plutôt qu'un accès direct à `v.donnees`.
-const donnees = (v) => (v && v.statut === 'ok' && !v.cache ? v.donnees : null);
-
-// ---------------------------------------------------------------- reprise
+// ---------------------------------------------------------- reprise
 // Reprise des appels en souffrance (3e tentative), fusionnée ici depuis
 // api/reprise.js le 07/09/2026 : le plan Hobby de Vercel plafonne à DOUZE
 // fonctions par déploiement, et la treizième a fait échouer deux builds.
@@ -192,28 +51,18 @@ const donnees = (v) => (v && v.statut === 'ok' && !v.cache ? v.donnees : null);
 // le secret.
 async function reprise(req, res) {
   const sql = db();
-  // Le SIREN à rappeler est celui de la SOCIÉTÉ de l'appel, et non celui
-  // de la tête du dossier. Corrigé le 09/09/2026 : depuis que la collecte
-  // renseigne `societe_id`, prendre `d.siren_tete` aurait rephotographié
-  // la tête tout en marquant l'appel d'une filiale comme abouti.
   const enSouffrance = await sql`
-    SELECT a.id, a.source, a.tentatives, a.dossier_id,
-           coalesce(s.siren, d.siren_tete) AS siren
-      FROM marteau_appel a
-      JOIN marteau_dossier d ON d.id = a.dossier_id
-      LEFT JOIN marteau_societe s ON s.id = a.societe_id
+    SELECT a.id, a.source, a.tentatives, a.dossier_id, d.siren_tete AS siren
+      FROM marteau_appel a JOIN marteau_dossier d ON d.id = a.dossier_id
      WHERE a.statut IN ('lent', 'en_cours') AND a.tentatives < ${TENTATIVES_MAX}
        AND a.dernier_essai < now() - interval '2 minutes'
      LIMIT 20
   `;
   const reprises = [];
   for (const a of enSouffrance) {
-    const chemin = a.source === 'photo' ? '/api/photo'
-      : a.source === 'liens' ? '/api/liens'
-      : a.source === 'registre' ? '/api/entreprises' : null;
+    const chemin = a.source === 'photo' ? '/api/photo' : a.source === 'liens' ? '/api/liens' : null;
     if (!chemin) continue;
-    const params = a.source === 'registre' ? { q: a.siren } : { siren: a.siren };
-    const v = await appelBorne(a.source, notre(chemin, params));
+    const v = await appelBorne(a.source, notre(chemin, { siren: a.siren }));
     const definitif = v.statut !== 'ok' && a.tentatives + 1 >= TENTATIVES_MAX;
     await sql`
       UPDATE marteau_appel
@@ -225,8 +74,6 @@ async function reprise(req, res) {
   }
   return res.status(200).json({ examines: enSouffrance.length, reprises });
 }
-
-// ---------------------------------------------------------------- handler
 
 export default async function handler(req, res) {
   // ------------------------------------------------------- le cron
@@ -266,8 +113,6 @@ export default async function handler(req, res) {
     return res.status(400).json({ erreur: 'dossier et qui sont requis' });
   }
 
-  const t0 = Date.now();
-
   try {
     const sql = db();
 
@@ -277,72 +122,134 @@ export default async function handler(req, res) {
     `;
     if (!d) return res.status(404).json({ erreur: `dossier ${dossier} inconnu` });
 
-    // ------------------------------------------------ la société auditée
-    // La ligne société doit EXISTER avant la collecte : `collecterSociete`
-    // travaille sur un identifiant, c'est lui qui porte le suivi par
-    // source et le drapeau de complétude. On l'insère donc à vide, quitte
-    // à la compléter juste après avec ce que la photographie rend.
-    const [tete] = await sql`
-      INSERT INTO marteau_societe
-        (dossier_id, siren, niveau_confiance, origine, niveau)
-      VALUES
-        (${d.id}, ${d.siren_tete}, 'structuree', 'accroche', 0)
-      ON CONFLICT (dossier_id, siren) DO UPDATE
-         SET niveau = marteau_societe.niveau
-      RETURNING id
-    `;
-
-    // Les trois sources de la tête EN PARALLÈLE. Chacune est bornée à
-    // 30 s et ne lève pas : un échec est nommé, jamais silencieux. Le
-    // drapeau de complétude n'est posé que si les trois aboutissent.
-    const rTete = await collecterSociete(d.id, tete.id, {
-      photo: notre('/api/photo', { siren: d.siren_tete }),
-      liens: notre('/api/liens', { siren: d.siren_tete }),
-      registre: notre('/api/entreprises', { q: d.siren_tete }),
-    });
-
-    const vPhoto = verdict(rTete, 'photo');
-    const vLiens = verdict(rTete, 'liens');
-    const vRegistre = verdict(rTete, 'registre');
+    // Les deux volets en parallèle. Chacun est borné et ne lève pas :
+    // un échec est nommé, jamais silencieux.
+    const [vPhoto, vLiens] = await Promise.all([
+      appelBorne('photo', notre('/api/photo', { siren: d.siren_tete })),
+      appelBorne('liens', notre('/api/liens', { siren: d.siren_tete })),
+    ]);
+    await enregistrer(d.id, null, vPhoto);
+    await enregistrer(d.id, null, vLiens);
 
     let parcellesEcrites = 0;
     let societesEcrites = 0;
-    let registres = 0;
 
-    const pTete = donnees(vPhoto);
-    if (pTete) {
-      await sql`
-        UPDATE marteau_societe
-           SET denomination = ${pTete.societe.denomination},
-               forme = ${pTete.societe.forme_juridique}
-         WHERE id = ${tete.id}
+    // ------------------------------------------------ la société auditée
+    if (vPhoto.statut === 'ok') {
+      const p = vPhoto.donnees;
+
+      const [tete] = await sql`
+        INSERT INTO marteau_societe
+          (dossier_id, siren, denomination, forme, niveau_confiance, origine, niveau)
+        VALUES
+          (${d.id}, ${p.societe.siren ?? d.siren_tete}, ${p.societe.denomination},
+           ${p.societe.forme_juridique}, 'structuree', 'accroche', 0)
+        ON CONFLICT (dossier_id, siren) DO UPDATE
+           SET denomination = EXCLUDED.denomination,
+               forme = EXCLUDED.forme
+        RETURNING id
       `;
       societesEcrites += 1;
-      parcellesEcrites += await ecrireParcelles(
-        sql, d.id, pTete.societe.siren ?? d.siren_tete, pTete, 'accroche',
-      );
 
-      if (pTete.tronque || pTete.indisponible?.length) {
+      // Les parcelles, commune par commune. `photo.js` plafonne son
+      // détail à 600 par commune et le signale par `tronque` : on écrit
+      // ce qu'on a reçu, et le drapeau part au rapport — surtout pas un
+      // total silencieusement amputé.
+      //
+      // DÉDOUBLONNAGE AVANT ÉCRITURE. Le cadastre sert parfois DEUX FOIS
+      // la même référence de parcelle, avec des droits DIFFÉRENTS — vu le
+      // 09/09/2026 sur 59599000BX0285 (Tourcoing), servie à la fois en
+      // « V - Bailleur d'un bail à réhabilitation » et en « W - Preneur ».
+      // Ce sont deux positions inverses dans le même bail.
+      //
+      // L'ancien code écrivait les deux lignes en ON CONFLICT DO UPDATE :
+      // la seconde écrasait la première, le dernier droit lu gagnait, et
+      // RIEN ne le disait. Pour un audit, choisir silencieusement entre
+      // bailleur et preneur est inacceptable. On regroupe donc par
+      // référence AVANT d'écrire, on garde le premier droit lu, et on
+      // MARQUE la parcelle à confirmer en portant les deux droits à la
+      // réserve. MARTEAU ne tranche pas : il signale.
+      const vues = new Map();
+      for (const c of p.communes ?? []) {
+        for (const par of c.parcelles ?? []) {
+          const dejaVue = vues.get(par.ref);
+          if (!dejaVue) {
+            vues.set(par.ref, { par, commune: c, droits: [par.droit || null] });
+            continue;
+          }
+          // Un droit identique est un doublon de service, sans portée.
+          // Un droit différent est une divergence de fond.
+          const droit = par.droit || null;
+          if (!dejaVue.droits.includes(droit)) {
+            dejaVue.droits.push(droit);
+            dejaVue.divergent = true;
+          }
+        }
+      }
+
+      const droitsDivergents = [];
+      for (const v of vues.values()) {
+        if (v.divergent) {
+          droitsDivergents.push({
+            ref: v.par.ref,
+            commune_insee: v.commune.code_insee,
+            commune: v.commune.nom_commune,
+            adresse: v.par.adresse || null,
+            droits: v.droits,
+            droit_retenu: v.par.droit || null,
+          });
+        }
+        await sql`
+          INSERT INTO marteau_parcelle
+            (dossier_id, code_parcelle, commune_insee, commune_nom,
+             siren_proprietaire, origine, a_confirmer,
+             droit, nature, contenance, adresse)
+          VALUES
+            (${d.id}, ${v.par.ref}, ${v.commune.code_insee}, ${v.commune.nom_commune},
+             ${p.societe.siren ?? d.siren_tete}, 'accroche', ${Boolean(v.divergent)},
+             ${v.par.droit || null}, ${v.par.nature || null},
+             ${v.par.contenance ?? null}, ${v.par.adresse || null})
+          ON CONFLICT (dossier_id, code_parcelle) DO UPDATE
+             SET droit = EXCLUDED.droit, nature = EXCLUDED.nature,
+                 contenance = EXCLUDED.contenance, adresse = EXCLUDED.adresse,
+                 a_confirmer = EXCLUDED.a_confirmer
+        `;
+        parcellesEcrites += 1;
+      }
+
+      // Une divergence de droit ouvre une réserve : elle se lève en
+      // qualifiant le droit au titre, pas en relançant une base.
+      if (droitsDivergents.length) {
+        await sql`
+          INSERT INTO marteau_reserve (dossier_id, code, libelle, detail)
+          VALUES (${d.id}, 'droits_divergents',
+                  ${'Divergence de droit au cadastre sur ' + droitsDivergents.length
+                    + ' parcelle(s) — une même référence est servie avec deux droits distincts, à qualifier au titre'},
+                  ${JSON.stringify({ parcelles: droitsDivergents.slice(0, 50), total: droitsDivergents.length })}::jsonb)
+          ON CONFLICT DO NOTHING
+        `;
+        await journaliser(d.id, qui, 'droits divergents au cadastre', {
+          parcelles: droitsDivergents.length,
+          references: droitsDivergents.slice(0, 20).map((x) => x.ref),
+        });
+      }
+
+      if (p.tronque || p.indisponible?.length) {
         // Journalisé : un audit établi sur un portefeuille tronqué ou
         // partiel doit pouvoir être daté et expliqué après coup.
         await journaliser(d.id, qui, 'photographie partielle', {
-          siren: d.siren_tete,
-          tronque: Boolean(pTete.tronque),
-          indisponible: pTete.indisponible ?? [],
-          annonce: pTete.agregats?.total_parcelles_annonce ?? null,
+          tronque: Boolean(p.tronque),
+          indisponible: p.indisponible ?? [],
+          annonce: p.agregats?.total_parcelles_annonce ?? null,
           ecrit: parcellesEcrites,
         });
       }
     }
 
-    const regTete = donnees(vRegistre);
-    if (regTete && await ecrireRegistre(sql, d.id, d.siren_tete, regTete)) {
-      registres += 1;
-    }
-
     // -------------------------------------------- les sociétés liées
-    const l = donnees(vLiens);
-    if (l) {
+    if (vLiens.statut === 'ok') {
+      const l = vLiens.donnees;
+
       // Seules les sociétés liées PORTANT DES BIENS entrent : un lien
       // sociétaire sans aucun bien n'a pas à encombrer l'audit. C'est le
       // filtre que liens.js applique déjà pour `alertes_perimetre`.
@@ -388,78 +295,67 @@ export default async function handler(req, res) {
       }
     }
 
-    // ------------------------------------- descente sur les filiales
-    // Mémo § 4.4 : MARTEAU appelle REDPAR sur CHAQUE société détectée.
-    // La descente s'arrête aux personnes morales, et le parallélisme est
-    // plafonné à quatre — REDPAR est un service de l'étude, pas une
-    // ressource infinie.
-    //
-    // Ne sont reprises que les sociétés dont la collecte n'est PAS
-    // complète : relancer une collecte ne rephotographie donc pas tout
-    // le périmètre.
-    const filiales = await sql`
-      SELECT id, siren, origine FROM marteau_societe
-       WHERE dossier_id = ${d.id}
-         AND siren <> ${d.siren_tete}
-         AND collecte_complete IS NOT TRUE
-       ORDER BY niveau, siren
-    `;
+    // ----------------------------------------- le registre des entreprises
+    // Pour chaque société du périmètre, on lit l'annuaire officiel (le même
+    // que l'étape de vérification SIREN) et on garde ce qui fonde la
+    // famille 1 : état administratif, création, siège, nature, dirigeants.
+    // Une société cessée doit se voir dans l'analyse, pas seulement sur
+    // une carte au moment du choix.
+    const sirens = await sql`SELECT siren FROM marteau_societe WHERE dossier_id = ${d.id}`;
+    let registres = 0;
+    for (const { siren } of sirens) {
+      const v = await appelBorne('registre', notre('/api/entreprises', { q: siren }));
+      if (v.statut !== 'ok') continue;
+      const fiche = (v.donnees.entreprises ?? []).find((x) => x.siren === siren);
+      if (!fiche) continue;
+      await sql`
+        UPDATE marteau_societe
+           SET etat_administratif = ${fiche.active ? 'active' : 'cessee'},
+               creee_le = ${fiche.creee_le ?? null},
+               siege_registre = ${fiche.siege ?? null},
+               nature_juridique = ${fiche.nature_juridique ?? null},
+               dirigeants = ${JSON.stringify(fiche.dirigeants ?? [])}::jsonb,
+               registre_lu_le = now(),
+               denomination = coalesce(denomination, ${fiche.denomination ?? null})
+         WHERE dossier_id = ${d.id} AND siren = ${siren}
+      `;
+      registres += 1;
+    }
 
-    let filialesTraitees = 0;
-    let filialesRestantes = 0;
+    // Le drapeau de collecte complète : posé quand les deux volets ont
+    // répondu. Il pilote la couleur canard de la société sur l'organigramme.
+    if (vPhoto.statut === 'ok' && vLiens.statut === 'ok') {
+      await sql`
+        UPDATE marteau_societe SET collecte_complete = true
+         WHERE dossier_id = ${d.id} AND siren = ${d.siren_tete}
+      `;
+    }
 
-    await parLots(filiales, PARALLELISME_REDPAR, async (s) => {
-      // Budget dépassé : on laisse la société à false et on la compte.
-      // Le prochain appel la reprendra — aucun curseur à conserver.
-      if (Date.now() - t0 > BUDGET_MS) { filialesRestantes += 1; return; }
-
-      const r = await collecterSociete(d.id, s.id, {
-        photo: notre('/api/photo', { siren: s.siren }),
-        registre: notre('/api/entreprises', { q: s.siren }),
-      });
-
-      const p = donnees(verdict(r, 'photo'));
-      if (p) {
-        parcellesEcrites += await ecrireParcelles(
-          sql, d.id, s.siren, p, s.origine ?? 'bodacc',
-        );
-        if (p.tronque || p.indisponible?.length) {
-          await journaliser(d.id, qui, 'photographie partielle', {
-            siren: s.siren,
-            tronque: Boolean(p.tronque),
-            indisponible: p.indisponible ?? [],
-          });
-        }
-      }
-
-      const reg = donnees(verdict(r, 'registre'));
-      if (reg && await ecrireRegistre(sql, d.id, s.siren, reg)) registres += 1;
-
-      filialesTraitees += 1;
-    });
-
+    // Le journal consigne ce qui a été ÉCRIT, pas ce que la source a
+    // annoncé. Les deux divergeaient dès qu'une référence était servie en
+    // double (813 annoncées, 812 écrites le 09/09/2026) : une piste
+    // d'audit qui surestime ne prouve rien. `annonce` n'apparaît que
+    // lorsqu'il y a un écart, et il est alors explicitement nommé.
+    const annonce = vPhoto.statut === 'ok'
+      ? (vPhoto.donnees?.agregats?.total_parcelles_annonce ?? null) : null;
     await journaliser(d.id, qui, 'collecte lancée', {
-      photo: vPhoto?.statut, liens: vLiens?.statut, registre: vRegistre?.statut,
-      tete_complete: rTete.complete,
+      photo: vPhoto.statut, liens: vLiens.statut,
       parcelles: parcellesEcrites, societes: societesEcrites, registres,
-      filiales: { traitees: filialesTraitees, restantes: filialesRestantes },
+      ...(annonce != null && annonce !== parcellesEcrites
+        ? { parcelles_annoncees_par_la_source: annonce }
+        : {}),
     });
 
-    const [{ tete: empreinte }] = await sql`SELECT marteau_journal_tete() AS tete`;
+    const [{ tete }] = await sql`SELECT marteau_journal_tete() AS tete`;
 
     return res.status(200).json({
       dossier: d.reference,
-      volets: {
-        photo: vPhoto?.statut, liens: vLiens?.statut, registre: vRegistre?.statut,
-      },
-      tete_complete: rTete.complete,
-      filiales: { traitees: filialesTraitees, restantes: filialesRestantes },
-      ecrit: { parcelles: parcellesEcrites, societes: societesEcrites, registres },
-      ms: Date.now() - t0,
+      volets: { photo: vPhoto.statut, liens: vLiens.statut },
+      ecrit: { parcelles: parcellesEcrites, societes: societesEcrites },
       // Empreinte de tête de la piste d'audit. À ancrer hors de la base :
       // c'est elle, et non le chaînage seul, qui rend une réécriture
       // opposable.
-      journal_tete: empreinte,
+      journal_tete: tete,
     });
   } catch (e) {
     console.error('[MARTEAU] collecter', e);
