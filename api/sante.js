@@ -5,6 +5,7 @@
 // Présence des variables, JAMAIS leur valeur.
 
 import { db } from '../lib/db.js';
+import { verifier as verifierNomenclature, VOYANTS } from '../lib/nomenclature.js';
 
 const TABLES = [
   'marteau_famille', 'marteau_voyant_ref', 'marteau_dossier',
@@ -39,7 +40,23 @@ export default async function handler(req, res) {
     base: null,
     tables: null,
     referentiel: null,
+    nomenclature: null,
     journal: null,
+  };
+
+  // Cohérence du plan de nommage — contrôle PUREMENT CODE, donc placé
+  // avant tout accès à la base : il doit répondre même DATABASE_URL
+  // absente. Un voyant orphelin est une pièce que personne ne demandera
+  // jamais, et le défaut est SILENCIEUX — le rapport sort, simplement il
+  // ne dit rien sur ce voyant. C'est le seul endroit où l'oubli se
+  // rattrape.
+  const nom = verifierNomenclature();
+  rapport.nomenclature = {
+    familles: nom.familles,
+    sous_familles: nom.sous_familles,
+    voyants: nom.voyants,
+    etat: nom.sain ? 'coherente' : 'INCOHÉRENTE',
+    ...(nom.sain ? {} : { anomalies: nom.anomalies }),
   };
 
   if (!config.DATABASE_URL) {
@@ -81,6 +98,36 @@ export default async function handler(req, res) {
         : `INCOMPLET — ${ref.sans_note} famille(s) sans note fixe`,
     };
 
+    // Recoupement des DEUX AXES : les voyants que le plan de nommage
+    // prétend alimenter contre ceux qui existent vraiment en base.
+    //
+    // Rappel du piège (mémo v4 § 21) : l'axe d'analyse et l'axe
+    // documentaire ne coïncident pas, et les familles 2 et 3 sont
+    // inversées. La table de correspondance est donc écrite en dur dans
+    // lib/nomenclature.js — ce qui veut dire qu'elle peut dériver du
+    // référentiel en base sans que rien ne le signale. Ce contrôle est
+    // ce qui rend la dérive visible.
+    const refVoyants = await sql`SELECT famille, code FROM marteau_voyant_ref`;
+    const enBase = new Map(refVoyants.map((r) => [r.code, Number(r.famille)]));
+    const ecarts = [];
+
+    for (const [code, v] of Object.entries(VOYANTS)) {
+      if (!enBase.has(code)) {
+        ecarts.push(`« ${code} » est alimenté par le plan de nommage mais absent du référentiel en base`);
+      } else if (enBase.get(code) !== v.famille) {
+        ecarts.push(`« ${code} » : famille ${v.famille} dans le code, ${enBase.get(code)} en base`);
+      }
+    }
+    for (const code of enBase.keys()) {
+      if (!VOYANTS[code]) {
+        ecarts.push(`« ${code} » existe en base mais aucune sous-famille documentaire ne l'alimente`);
+      }
+    }
+
+    rapport.nomenclature.recoupement = ecarts.length
+      ? { etat: 'DÉRIVE', ecarts }
+      : { etat: 'concordant', voyants: enBase.size };
+
     // Deux garanties de nature différente, à ne pas confondre dans le
     // diagnostic.
     //
@@ -117,6 +164,8 @@ export default async function handler(req, res) {
 
     rapport.etat = rapport.tables.etat === 'complètes'
       && rapport.referentiel.etat === 'complet'
+      && rapport.nomenclature.etat === 'coherente'
+      && rapport.nomenclature.recoupement.etat === 'concordant'
       && !eteints.length && !ruptures.length
       ? 'operationnel' : 'incomplet';
   } catch (e) {
