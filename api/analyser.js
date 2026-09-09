@@ -20,6 +20,7 @@
 
 import { db, journaliser } from '../lib/db.js';
 import { PHRASES } from '../lib/phrases.js';
+import { sousFamille, voyantsAlimentesPar, cheminDrive } from '../lib/nomenclature.js';
 
 const aujourdhui = () => new Date().toLocaleDateString('fr-FR');
 
@@ -144,30 +145,74 @@ export default async function handler(req, res) {
     // Le K-bis n'y est pas : il est demandé par l'étude elle-même, jamais
     // au client (arbitrage 07/09). L'état hypothécaire a son cycle propre
     // (à saisir → saisie → reçu → analysé), il est saisi au logiciel métier.
+//
+    // Chaque pièce porte MAINTENANT son code documentaire : c'est lui qui
+    // donne le sous-dossier Drive et le nom de fichier attendu. Les deux
+    // colonnes sont indépendantes — `famille` est l'axe d'ANALYSE (quel
+    // voyant bouge), `code_doc` l'axe DOCUMENTAIRE (où le fichier vit).
+    // Ne JAMAIS déduire l'un de l'autre : les familles 2 et 3 sont
+    // inversées entre les deux axes (mémo v5 § 21).
     const PIECES = [
-      [2,  'piece', 'Titre de propriété',                                        'client'],
-      [4,  'piece', 'Règlement de copropriété et état descriptif de division',   'client'],
-      [4,  'piece', 'Procès-verbaux d\'assemblée générale (3 derniers exercices)', 'client'],
-      [5,  'etat_hypothecaire', 'État hypothécaire',                             'publicite_fonciere'],
-      [5,  'piece', 'Copie des actes de prêt en cours et de leurs garanties',    'client'],
-      [6,  'piece', 'Liste des autorisations d\'urbanisme délivrées',             'mairie'],
-      [6,  'piece', 'Attestations dommages-ouvrage et décennale (travaux < 10 ans)', 'client'],
-      [7,  'piece', 'Dossier de diagnostics techniques',                         'client'],
-      [8,  'piece', 'État des risques et pollutions',                            'client'],
-      [9,  'piece', 'Baux en cours et état locatif',                             'client'],
-      [9,  'piece', 'Contrats attachés à l\'immeuble (gestion, entretien, énergie)', 'client'],
-      [9,  'piece', 'Autorisations d\'occupation du domaine public',              'client'],
-      [10, 'piece', 'Acte d\'acquisition, tableau des immobilisations, factures de travaux, détail du compte 2013', 'expert_comptable'],
+      // famille, nature, libellé, destinataire, code documentaire
+      [2,  'piece', 'Titre de propriété',                                        'client',              '021'],
+      [4,  'piece', 'Règlement de copropriété et état descriptif de division',   'client',              '042'],
+      [4,  'piece', 'Procès-verbaux d\'assemblée générale (3 derniers exercices)', 'client',              '042'],
+      [5,  'etat_hypothecaire', 'État hypothécaire',                             'publicite_fonciere',  '051'],
+      [5,  'piece', 'Copie des actes de prêt en cours et de leurs garanties',    'client',              '053'],
+      [6,  'piece', 'Liste des autorisations d\'urbanisme délivrées',             'mairie',              '062'],
+      [6,  'piece', 'Attestations dommages-ouvrage et décennale (travaux < 10 ans)', 'client',          '095'],
+      [7,  'piece', 'Dossier de diagnostics techniques',                         'client',              '071'],
+      [8,  'piece', 'État des risques et pollutions',                            'client',              '081'],
+      // Le libellé couvre commerciaux ET habitation (091 et 092). Rangé en
+      // 091 par défaut : le portefeuille audité est commercial dans la
+      // quasi-totalité des cas. À scinder en deux pièces si un dossier
+      // porte de l'habitation — signalé par verifierRangement().
+      [9,  'piece', 'Baux en cours et état locatif',                             'client',              '091'],
+      [9,  'piece', 'Contrats attachés à l\'immeuble (gestion, entretien, énergie)', 'client',          '094'],
+      // ÉCART CONNU, en attente d'arbitrage JFD : la 023 (titres
+      // d'occupation dont la société est bénéficiaire) alimente
+      // `nature_droit`, qui est en famille d'analyse 5 — pas 9. Une AOT du
+      // domaine public est consentie À la société, elle relève donc du
+      // droit détenu. La famille reste à 9 tant que ce n'est pas tranché,
+      // et verifierRangement() le signale au lieu de le taire.
+      [9,  'piece', 'Autorisations d\'occupation du domaine public',              'client',              '023'],
+      [10, 'piece', 'Acte d\'acquisition, tableau des immobilisations, factures de travaux, détail du compte 2013', 'expert_comptable', '101'],
     ];
+
+    // Contrôle de rangement : la famille d'analyse déclarée doit figurer
+    // parmi celles des voyants que le code documentaire alimente. Un
+    // écart n'est pas bloquant — il est RENDU, comme le recoupement de
+    // /api/sante, parce qu'un mauvais rangement est un défaut silencieux :
+    // la pièce arrive, elle est simplement classée là où personne ne la
+    // cherchera.
+    const verifierRangement = () => {
+      const ecarts = [];
+      for (const [fam, , libelle, , code] of PIECES) {
+        const sf = sousFamille(code);
+        if (!sf) {
+          ecarts.push(`« ${libelle} » : code documentaire ${code} inconnu`);
+          continue;
+        }
+        const familles = voyantsAlimentesPar(code).map((v) => v.famille);
+        if (!familles.includes(fam)) {
+          ecarts.push(
+            `« ${libelle} » : rangée en ${code} (${sf.libelle}), qui alimente `
+            + `la famille ${familles.join(' et ') || 'aucune'}, mais déclarée en famille ${fam}`,
+          );
+        }
+      }
+      return ecarts;
+    };
+    const ecartsRangement = verifierRangement();
     await sql`DELETE FROM marteau_piece WHERE dossier_id = ${d.id} AND statut IN ('demandable', 'a_saisir')`;
     const dejaLibelles = (await sql`SELECT libelle FROM marteau_piece WHERE dossier_id = ${d.id}`).map((r) => r.libelle);
     let demandables = 0;
-    for (const [fam, nature, libelle, dest] of PIECES) {
+    for (const [fam, nature, libelle, dest, code] of PIECES) {
       if (dejaLibelles.includes(libelle)) continue;
       await sql`
-        INSERT INTO marteau_piece (dossier_id, famille, libelle, nature, destinataire_type, statut)
+        INSERT INTO marteau_piece (dossier_id, famille, libelle, nature, destinataire_type, statut, code_doc)
         VALUES (${d.id}, ${fam}, ${libelle}, ${nature}, ${dest},
-                ${nature === 'etat_hypothecaire' ? 'a_saisir' : 'demandable'})
+                ${nature === 'etat_hypothecaire' ? 'a_saisir' : 'demandable'}, ${code})
       `;
       demandables += 1;
     }
@@ -178,7 +223,22 @@ export default async function handler(req, res) {
     });
     const [{ tete: empreinte }] = await sql`SELECT marteau_journal_tete() AS tete`;
 
-    return res.status(200).json({ dossier: d.reference, voyants: voyants.length, ...parCouleur, journal_tete: empreinte });
+    // Le rangement attendu, DÉDUIT du code — jamais stocké, sinon il y
+    // aurait deux vérités à maintenir. C'est ce que l'écran affiche à côté
+    // de chaque pièce et ce que le mail de demande rappellera.
+    const rangement = PIECES.map(([, , libelle, , code]) => ({
+      libelle, code, sous_famille: sousFamille(code)?.libelle ?? null,
+      chemin: cheminDrive(code),
+    }));
+
+    return res.status(200).json({
+      dossier: d.reference,
+      voyants: voyants.length,
+      ...parCouleur,
+      rangement,
+      ...(ecartsRangement.length ? { anomalies_rangement: ecartsRangement } : {}),
+      journal_tete: empreinte,
+    });
   } catch (e) {
     console.error('[MARTEAU] analyser', e);
     return res.status(500).json({ erreur: e.message });
