@@ -227,10 +227,11 @@ async function lister(res, { clos = false } = {}) {
            (SELECT count(*) FROM marteau_voyant v
              WHERE v.dossier_id = d.id AND v.couleur = 'canard')::int AS canard
       FROM marteau_dossier d
-     -- NE PAS revenir à un fragment sql`` imbriqué ici : le pilote Neon
-     -- sérialise un fragment interpolé comme un PARAMÈTRE, pas comme du
-     -- SQL, et la requête part en « invalid input syntax for type
-     -- boolean ». On compare donc le prédicat au drapeau.
+     -- NE PAS revenir à un fragment SQL imbriqué ici (une sous-requête
+     -- interpolee depuis un autre gabarit) : le pilote Neon le serialise
+     -- comme un PARAMETRE et non comme du SQL, et la requete part en
+     -- « invalid input syntax for type boolean ». On compare donc le
+     -- predicat au drapeau.
      WHERE (d.clos_le IS NOT NULL) = ${clos}::boolean
      ORDER BY d.ouvert_le DESC
   `;
