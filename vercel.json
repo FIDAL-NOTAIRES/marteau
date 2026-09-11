@@ -20,18 +20,9 @@
       "maxDuration": 30
     },
     "api/dossier.js": {
-      "maxDuration": 30
-    },
-    "api/etat.js": {
-      "maxDuration": 30
-    },
-    "api/lever.js": {
-      "maxDuration": 30
+      "maxDuration": 60
     },
     "api/analyser.js": {
-      "maxDuration": 30
-    },
-    "api/demander.js": {
       "maxDuration": 30
     },
     "api/reunion.js": {
@@ -40,11 +31,5 @@
     "api/entreprises.js": {
       "maxDuration": 30
     }
-  },
-  "crons": [
-    {
-      "path": "/api/collecter",
-      "schedule": "0 3 * * *"
-    }
-  ]
+  }
 }
