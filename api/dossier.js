@@ -40,6 +40,7 @@
 
 import { db, journaliser } from '../lib/db.js';
 import { rendre } from '../lib/phrases.js';
+import { sousFamille, cheminDrive } from '../lib/nomenclature.js';
 
 const estSiren = (v) => /^\d{9}$/.test(String(v ?? ''));
 const aujourdhui = () => new Date().toLocaleDateString('fr-FR');
@@ -310,12 +311,23 @@ async function lire(res, ref) {
            count(*) FILTER (WHERE statut IN ('demandable','a_saisir'))::int AS demandables
       FROM marteau_piece WHERE dossier_id = ${d.id}
   `;
-  const registre = await sql`
+  const registre = (await sql`
     SELECT id, famille, libelle, nature, destinataire_type, statut,
-           premier_envoi_le, relances, depose_le
+           premier_envoi_le, relances, depose_le, code_doc
       FROM marteau_piece WHERE dossier_id = ${d.id}
      ORDER BY famille, id
-  `;
+  `).map((p) => {
+    // Chaque pièce porte son code documentaire à TROIS CHIFFRES, d'où se
+    // déduisent la sous-famille et le chemin Drive. Le chemin se DÉDUIT du
+    // code, jamais l'inverse : le code appartient à la pièce, si c'était le
+    // dossier qui le portait une pièce mal rangée changerait de code.
+    const sf = p.code_doc ? sousFamille(p.code_doc) : null;
+    return {
+      ...p,
+      sous_famille: sf?.libelle ?? null,
+      chemin: p.code_doc ? cheminDrive(p.code_doc) : null,
+    };
+  });
 
   const journal = await sql`
     SELECT id, le, qui, quoi, detail, empreinte
