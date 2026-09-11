@@ -691,6 +691,14 @@ async function afficherEtat(ref) {
     + ' · ouvert le ' + new Date(d.dossier.ouvert_le).toLocaleString('fr-FR')
     + ' · <b>' + (d.dossier.etat === 'provisoire' ? 'provisoire' : 'définitif possible') + '</b></div>';
 
+  // Relance de l'ANALYSE SEULE. Sans ce bouton il fallait repasser par une
+  // collecte complète pour recalculer les voyants — or l'analyse ne lit
+  // que la base, elle n'appelle aucune source. Les voyants sont un calcul
+  // recalculable ; la piste d'audit, elle, garde chaque passage.
+  h += '<div class="rang" style="margin:-4px 0 12px"><div style="flex:0 0 auto">'
+    + '<button class="sec" id="relancer">Relancer l\'analyse</button></div>'
+    + '<div style="flex:1 1 auto" class="att">Recalcule les dix familles depuis la base, sans réinterroger REDPAR ni le BODACC.</div></div>';
+
   h += '<h3 style="font-size:15px;margin:12px 0 6px">Réserves — ' + n(jr.total - jr.levees) + ' ouverte(s)</h3>'
     + '<table><thead><tr><th></th><th>Réserve</th><th>Ouverte le</th><th>Levée</th></tr></thead><tbody>'
     + d.reserves.map((x) => '<tr' + (x.levee_le ? ' class="off"' : '') + '>'
@@ -761,6 +769,28 @@ async function afficherEtat(ref) {
   const cochees = (nature) => [].slice.call(document.querySelectorAll('#registre .ckp:checked'))
     .filter((k) => !nature || k.dataset.nature === nature).map((k) => Number(k.dataset.id));
   const quiDem = () => ($('#collab').value || $('#assoc').value || 'JFD').trim().toUpperCase();
+
+  $('#relancer').addEventListener('click', async () => {
+    const b = $('#relancer');
+    b.disabled = true;
+    b.textContent = 'Analyse en cours…';
+    try {
+      const r = await fetch('/api/analyser', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dossier: ref, qui: quiDem() }),
+      });
+      const a = await r.json();
+      if (!r.ok) throw new Error(a.erreur || 'analyse en échec');
+      // La liste d'accueil porte les couleurs et la ventilation : elle
+      // doit suivre, sinon le bandeau ment jusqu'au prochain rechargement.
+      await afficherEtat(ref);
+      await chargerListe();
+    } catch (err) {
+      b.disabled = false;
+      b.textContent = 'Relancer l\'analyse';
+      window.alert(err.message);
+    }
+  });
   const appelDem = (action, pieces) => posterDossier(action, { dossier: ref, pieces, qui: quiDem() });
   $('#preparer').addEventListener('click', async () => {
     const pieces = cochees('piece');
