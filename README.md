@@ -20,7 +20,7 @@ appelle PAINT en interne. Un seul constructeur de polygone.
 
 | Brique | État |
 |---|---|
-| Modèle de données (`sql/001` à `008`) | **001–008 appliquées** (008 vérifiée en base le 10/09 : six colonnes de registre présentes sur `marteau_societe`) |
+| Modèle de données (`sql/001` à `009`) | **001–009 appliquées** (008 vérifiée en base le 10/09 : six colonnes de registre sur `marteau_societe` ; 009 pose `code_doc` sur `marteau_piece`) |
 | Façade (`index.html`) | écrite le 01/09 — accroche large, carte Leaflet/IGN, validation du périmètre ; **familles et couleurs en retard sur le mémo** ; **écran d'accueil non codé** |
 | Vérification SIREN (`api/entreprises.js`) | reprise de REDPAR : annuaire officiel des entreprises (gouv.fr), une carte par société — siège, création, APE, dirigeants — à choisir avant toute photographie. La machine propose, l'humain décide |
 | Sources (`api/photo.js`, `api/liens.js`, `api/matrice.js`) | écrites le 01/09, sans état — REDPAR, BODACC, raccord MATRICE |
@@ -30,7 +30,7 @@ appelle PAINT en interne. Un seul constructeur de polygone.
 | Nomenclature (`lib/nomenclature.js`) | plan de nommage documentaire : dix familles, 29 sous-familles, table de correspondance vers les 21 voyants. Contrôlée par `/api/sante` |
 | Analyse (`api/analyser.js`) | calcule les voyants des dix familles depuis la base seule ; recalculable ; pose aussi le registre des pièces demandables |
 | Note de réunion (`api/reunion.js`, `reunion.html`) | page de garde datée, une liste par dossier, blocs < 15 j / > 15 j depuis le premier envoi, alertes « à saisir », réserves levées avec qui et pourquoi. Lecture seule, imprimable |
-| Module Documents / Drive | **non commencé** — dépôt des titres, inventaire, rangement et renommage par la nomenclature. Colonne `code_doc` déjà posée sur `marteau_piece` |
+| Module Documents / Drive | **non commencé** — dépôt des titres, inventaire, rangement et renommage par la nomenclature. Colonne `code_doc` posée (sql/009) et déjà rendue au registre |
 | Unités foncières, organigramme | spécifiés, non codés |
 | Reste des sources | à brancher |
 | Rendu du rapport | non commencé |
@@ -87,6 +87,12 @@ existante n'a pas eu à changer pour l'ouverture.
   n'est pas un POST (405) et la reprise exige `{ action: 'reprise' }`.
   Elle ne faisait donc rien, chaque nuit, silencieusement. La reprise
   est appelée à la main ou à l'ouverture du dossier.
+
+* **`code_doc` est NUL sur les pièces créées avant le 09/09/2026.** La
+  nomenclature ne vaut que pour l'avenir (clause de non-rétroactivité,
+  fiche OUT.IA.2.1.1 § 1.1) : le registre doit rester lisible sans code,
+  et `sousFamille()` comme `cheminDrive()` ne doivent jamais être
+  appelées sur un code nul.
 
 * **`/api/sante` ne contrôle pas les COLONNES**, seulement la présence
   des tables. Une migration oubliée passe donc « operationnel » et casse
