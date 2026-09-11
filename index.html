@@ -74,6 +74,22 @@
   .entreprise .l{color:var(--gris);font-size:12px}
   .entreprise .l b{color:var(--nuit);font-weight:500}
   .deux{display:grid;grid-template-columns:1fr 1fr;gap:4px 16px;margin-top:6px}
+  /* Une ligne par dossier. Le BANDEAU sur toute la hauteur de la ligne, et
+     non une pastille : arbitrage du 10/09/2026, les pastilles etaient trop
+     petites pour se lire d'un coup d'oeil. */
+  .ligne-dossier{display:flex;gap:14px;align-items:center;flex-wrap:wrap;
+    border:1px solid var(--bord);border-left:7px solid var(--gris);border-radius:4px;
+    padding:10px 14px;margin-bottom:8px;background:#fff;cursor:pointer}
+  .ligne-dossier:hover{border-color:var(--canard);border-left-color:inherit;box-shadow:0 0 0 2px rgba(51,131,139,.12)}
+  .ligne-dossier.b-canard{border-left-color:var(--canard)}
+  .ligne-dossier.b-jaune{border-left-color:var(--jaune-texte)}
+  .ligne-dossier.b-orange{border-left-color:var(--orange)}
+  .ligne-dossier.b-carmin{border-left-color:var(--carmin)}
+  .ligne-dossier .ref{font-family:Georgia,serif;font-size:15px;flex:0 0 90px}
+  .ligne-dossier .nom{flex:1 1 240px;font-weight:500}
+  .ligne-dossier .chiffre{flex:0 0 auto;font-size:12px;color:var(--gris);
+    font-variant-numeric:tabular-nums;text-align:right;min-width:92px}
+  .ligne-dossier .chiffre b{color:var(--nuit);font-weight:600}
   footer{color:var(--gris);font-size:11px;text-align:center;padding:20px}
 </style>
 </head>
@@ -101,6 +117,28 @@
       </div>
     </div>
     <div id="etat" class="att" style="margin-top:10px"></div>
+  </section>
+
+  <!-- Reprise d'un dossier. HORS de #resultat : ce bloc était auparavant
+       enfermé dans le panneau masqué, ce qui obligeait à photographier une
+       société avant de pouvoir rouvrir un dossier existant. Préfiguration
+       de l'écran d'accueil. -->
+  <section class="carte" id="ecran-reprise">
+    <h2 style="font-size:18px;margin-bottom:4px">Dossiers en cours</h2>
+    <p class="att" style="margin:0 0 12px">
+      Les audits ouverts, les plus récents d'abord. Le bandeau de couleur de chaque ligne est
+      la plus grave de ses familles. Cliquez une ligne pour afficher son état.
+    </p>
+    <div id="liste-dossiers" class="att">Lecture…</div>
+    <div class="rang" style="margin-top:14px;padding-top:12px;border-top:1px solid var(--bord)">
+      <div style="flex:0 0 220px">
+        <label for="ref">Ou saisir une référence</label>
+        <input type="text" id="ref" placeholder="2026-0001" autocomplete="off">
+      </div>
+      <div style="flex:0 0 auto"><button class="sec" id="rouvrir">Afficher l'état</button></div>
+      <div style="flex:0 0 auto"><button class="sec" id="voir-clos">Afficher les dossiers clos</button></div>
+    </div>
+    <div id="etat-res" style="margin-top:12px"></div>
   </section>
 
   <div id="resultat" class="cache">
@@ -151,14 +189,9 @@
         <div style="flex:0 0 auto"><button id="enreg">Enregistrer et collecter</button></div>
       </div>
       <div id="enreg-res"></div>
-      <div class="rang" style="margin-top:14px;padding-top:12px;border-top:1px solid var(--bord)">
-        <div style="flex:0 0 220px">
-          <label for="ref">Rouvrir un dossier existant</label>
-          <input type="text" id="ref" placeholder="2026-0001" autocomplete="off">
-        </div>
-        <div style="flex:0 0 auto"><button class="sec" id="rouvrir">Afficher l'état</button></div>
-      </div>
-      <div id="etat-res" style="margin-top:12px"></div>
+      <p class="att" style="margin:10px 0 0">
+        L'état du dossier s'affiche dans « Dossiers en cours », en haut de page.
+      </p>
     </section>
 
     <section class="carte">
@@ -758,6 +791,52 @@ async function afficherEtat(ref) {
     });
   });
 }
+
+// --------------------------------------------------- liste des dossiers
+// Les dossiers CLOS ne sortent pas par defaut : ils sont derriere un
+// filtre (arbitrage du 10/09/2026). Un clic sur une ligne affiche l'etat.
+let CLOS = false;
+async function chargerListe() {
+  const cible = $('#liste-dossiers');
+  cible.innerHTML = 'Lecture…';
+  try {
+    const r = await fetch(DOSSIER + '?liste=1' + (CLOS ? '&clos=1' : ''));
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.erreur || 'lecture impossible');
+    if (!d.dossiers.length) {
+      cible.innerHTML = CLOS ? 'Aucun dossier clos.' : 'Aucun dossier en cours.';
+      return;
+    }
+    cible.classList.remove('att');
+    cible.innerHTML = d.dossiers.map((x) => {
+      const jp = x.jauges.pieces, jr = x.jauges.reserves;
+      return '<div class="ligne-dossier ' + (x.couleur ? 'b-' + x.couleur : '') + '" data-ref="' + e(x.reference) + '">'
+        + '<div class="ref">' + e(x.reference) + '</div>'
+        + '<div class="nom">' + e(x.denomination || x.siren)
+        + '<div class="att">' + e(x.associe) + (x.collaborateur ? ' · ' + e(x.collaborateur) : '')
+        + ' · ouvert le ' + new Date(x.ouvert_le).toLocaleDateString('fr-FR')
+        + (x.clos_le ? ' · clos le ' + new Date(x.clos_le).toLocaleDateString('fr-FR') : '') + '</div></div>'
+        + '<div class="chiffre"><b>' + n(x.parcelles) + '</b><div>parcelles</div></div>'
+        + '<div class="chiffre"><b>' + n(jp.recues) + ' / ' + n(jp.demandees) + '</b><div>pièces reçues</div></div>'
+        + '<div class="chiffre"><b>' + n(jr.total - jr.levees) + '</b><div>réserve(s) ouverte(s)</div></div>'
+        + '<div class="chiffre"><b>' + (x.etat === 'provisoire' ? 'provisoire' : 'définitif possible') + '</b></div>'
+        + '</div>';
+    }).join('');
+    cible.querySelectorAll('.ligne-dossier').forEach((l) => l.addEventListener('click', () => {
+      $('#ref').value = l.dataset.ref;
+      $('#rouvrir').click();
+    }));
+  } catch (err) {
+    cible.innerHTML = '<div class="alerte">Liste indisponible — ' + e(err.message) + '</div>';
+  }
+}
+$('#voir-clos').addEventListener('click', () => {
+  CLOS = !CLOS;
+  $('#voir-clos').textContent = CLOS ? 'Revenir aux dossiers en cours' : 'Afficher les dossiers clos';
+  $('#ecran-reprise').querySelector('h2').textContent = CLOS ? 'Dossiers clos' : 'Dossiers en cours';
+  chargerListe();
+});
+chargerListe();
 
 $('#rouvrir').addEventListener('click', () => {
   const ref = $('#ref').value.trim();
