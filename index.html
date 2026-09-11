@@ -27,6 +27,8 @@
   label{display:block;font-size:12px;text-transform:uppercase;letter-spacing:.6px;color:var(--gris);margin-bottom:4px}
   input[type=text]{width:100%;padding:10px 12px;border:1px solid var(--bord);border-radius:3px;
                    font-family:inherit;font-size:15px}
+  select{width:100%;padding:10px 12px;border:1px solid var(--bord);border-radius:3px;
+         font-family:inherit;font-size:15px;background:#fff;color:var(--nuit)}
   button{background:var(--canard);color:#fff;border:0;border-radius:3px;padding:10px 18px;
          font-family:inherit;font-size:14px;cursor:pointer}
   button:hover{background:#2b6f76}
@@ -178,9 +180,30 @@
         réserves d'analyse — et la première ligne de la piste d'audit chaînée.
       </p>
       <div class="rang" style="margin-bottom:10px">
-        <div style="flex:0 0 160px">
+        <div style="flex:0 0 300px">
           <label for="assoc">Associé en charge</label>
-          <input type="text" id="assoc" placeholder="JFD" autocomplete="off" maxlength="6">
+          <!-- Liste des associés reprise de PARTAGE AMIABLE (feuille Drive
+               `10amtSne7u3XTwvgdbznlUzv9CcvzokTO`). La VALEUR est ce qui part
+               en base dans `associe_en_charge` et ce à quoi la levée sous code
+               est imputée : ne pas la changer sans reprendre les dossiers
+               existants. Le libellé seul est cosmétique.
+               À TRANCHER : DIRADOURIAN et DEBLECKER partagent les initiales
+               ND — la seconde porte NDB ici, faute de règle connue. -->
+          <select id="assoc">
+            <option value="">— choisir —</option>
+            <option value="CB">BARBOT Camille — Rennes</option>
+            <option value="LB">BISSON Laure — Caen</option>
+            <option value="NDB">DEBLECKER Nathalie — La Madeleine</option>
+            <option value="SD">DELAHAYE Stéphane — La Madeleine</option>
+            <option value="ND">DIRADOURIAN Nicolas — La Madeleine</option>
+            <option value="JFD">DUMETZ Jean-François — Paris</option>
+            <option value="OF">FEVRE Ophélie — Lyon</option>
+            <option value="CG">GRUNBERG Charles — Saint-Herblain</option>
+            <option value="PH">HERTFELDER Pierre — Paris</option>
+            <option value="NJ">JURCZAK Nathalie — La Madeleine</option>
+            <option value="FXL">LAUNAIS François-Xavier — Paris</option>
+            <option value="MP">POGNAN Mathieu — Champigny</option>
+          </select>
         </div>
         <div style="flex:0 0 160px">
           <label for="collab">Collaborateur</label>
