@@ -17,6 +17,31 @@
 //   • tout le reste ouvre en jaune, chacun avec son motif d'attente.
 // Le reste s'allumera source par source, au fur et à mesure des
 // branchements (RISQUES, ADEME, Sitadel, TRENTE…).
+//
+// ---------------------------------------------------------------------
+// VENTILATION PAR SOCIÉTÉ — correction du 11/09/2026
+//
+// Depuis la descente sur les filiales (mémo § 4.4, codée le 09/09), le
+// périmètre contient les parcelles des sociétés LIÉES en plus de celles
+// de la société auditée : sur 2026-0001, 1 636 au nom de LOGIS MÉTROPOLE
+// et 2 192 au nom de HABITAT DU NORD, sa société absorbante.
+//
+// Les agrégats de ce fichier comptaient TOUTES les parcelles du
+// périmètre sans distinguer `siren_proprietaire`. Deux phrases s'en
+// trouvaient fausses, et de la pire façon — plausibles :
+//
+//   • la DÉSIGNATION annonçait 3 828 parcelles et la contenance cumulée
+//     comme étant le bien de la société auditée ;
+//   • la NATURE DU DROIT comptait les parcelles démembrées des autres
+//     sociétés dans une phrase qui dit « la société auditée n'est
+//     titulaire que d'un droit… ».
+//
+// Les deux ne portent désormais QUE sur les parcelles publiées au nom de
+// la société auditée. Le reste du périmètre fait l'objet d'un voyant
+// distinct, `designation_perimetre_elargi`, qui le nomme société par
+// société. NE PAS refusionner ces compteurs : l'information est en base
+// (`siren_proprietaire`), c'est la restitution qui doit la porter.
+// ---------------------------------------------------------------------
 
 import { db, journaliser } from '../lib/db.js';
 import { PHRASES } from '../lib/phrases.js';
@@ -45,15 +70,38 @@ export default async function handler(req, res) {
       SELECT siren, denomination FROM marteau_societe
        WHERE dossier_id = ${d.id} AND role_fusion = 'absorbante' ORDER BY id LIMIT 1
     `;
+    // Tous les compteurs sont FILTRÉS sur la société auditée, sauf
+    // `autres` qui compte le reste du périmètre. Voir l'en-tête : ne pas
+    // retirer les FILTER, ils sont la correction.
     const [parc] = await sql`
-      SELECT count(*)::int AS total, count(DISTINCT commune_insee)::int AS communes,
-             coalesce(sum(contenance),0)::bigint AS contenance,
+      SELECT count(*) FILTER (WHERE siren_proprietaire = ${d.siren_tete})::int AS total,
+             count(DISTINCT commune_insee) FILTER (WHERE siren_proprietaire = ${d.siren_tete})::int AS communes,
+             coalesce(sum(contenance) FILTER (WHERE siren_proprietaire = ${d.siren_tete}), 0)::bigint AS contenance,
              -- REDPAR rend le droit sous la forme « P - Propriétaire », « E - Emphytéote » :
              -- un LIBELLÉ, pas un code nu. On teste la première lettre, comme la façade.
-             count(*) FILTER (WHERE droit IS NOT NULL AND left(trim(droit), 1) <> 'P')::int AS demembre,
-             array_remove(array_agg(DISTINCT droit) FILTER (WHERE droit IS NOT NULL AND left(trim(droit), 1) <> 'P'), NULL) AS codes
+             count(*) FILTER (WHERE siren_proprietaire = ${d.siren_tete}
+                                AND droit IS NOT NULL AND left(trim(droit), 1) <> 'P')::int AS demembre,
+             array_remove(array_agg(DISTINCT droit) FILTER (WHERE siren_proprietaire = ${d.siren_tete}
+                                AND droit IS NOT NULL AND left(trim(droit), 1) <> 'P'), NULL) AS codes,
+             count(*) FILTER (WHERE siren_proprietaire IS DISTINCT FROM ${d.siren_tete})::int AS autres
         FROM marteau_parcelle WHERE dossier_id = ${d.id} AND en_perimetre
     `;
+
+    // Le détail du périmètre élargi, société par société. La dénomination
+    // vient de marteau_societe quand elle y est ; à défaut le SIREN seul,
+    // jamais un trou.
+    const autresSocietes = parc.autres > 0 ? await sql`
+      SELECT p.siren_proprietaire AS siren, s.denomination,
+             count(*)::int AS parcelles,
+             coalesce(sum(p.contenance), 0)::bigint AS contenance
+        FROM marteau_parcelle p
+        LEFT JOIN marteau_societe s
+               ON s.dossier_id = p.dossier_id AND s.siren = p.siren_proprietaire
+       WHERE p.dossier_id = ${d.id} AND p.en_perimetre
+         AND p.siren_proprietaire IS DISTINCT FROM ${d.siren_tete}
+       GROUP BY p.siren_proprietaire, s.denomination
+       ORDER BY count(*) DESC
+    ` : [];
 
     // Chaque entrée : [code de phrase, précisions]. Le niveau est le
     // dossier (ni société ni parcelle) sauf indication.
@@ -83,11 +131,24 @@ export default async function handler(req, res) {
       poser('identite_denominations', { nombre: denoms.length, denominations: denoms.join(' ; ') });
     }
 
-    // 2. désignation — cadastre seul, titre attendu.
+    // 2. désignation — cadastre seul, titre attendu. Les chiffres sont
+    // ceux de la SOCIÉTÉ AUDITÉE et d'elle seule.
     poser('designation_attente_titre', {
       parcelles: parc.total, communes: parc.communes,
       contenance: Number(parc.contenance).toLocaleString('fr-FR') + ' m²',
     });
+    // Le reste du périmètre, nommé. Voyant distinct, pas une nuance
+    // glissée dans la phrase précédente : ce sont deux constats de nature
+    // différente, l'un désigne un bien, l'autre signale ce qui n'en est
+    // pas encore un.
+    if (parc.autres > 0) {
+      const detail = autresSocietes.map((s) => {
+        const nom = s.denomination || `SIREN ${s.siren}`;
+        return `${nom} (SIREN ${s.siren}) : ${s.parcelles} parcelle(s), `
+          + `${Number(s.contenance).toLocaleString('fr-FR')} m²`;
+      }).join(' ; ');
+      poser('designation_perimetre_elargi', { autres: parc.autres, detail });
+    }
 
     // 3. propriété
     poser('propriete_attente');
@@ -95,7 +156,9 @@ export default async function handler(req, res) {
     // 4. organisation de l'ensemble — ouvre en jaune par construction.
     poser('organisation_attente');
 
-    // 5. hypothécaire — inscriptions en attente ; nature du droit CALCULÉE.
+    // 5. hypothécaire — inscriptions en attente ; nature du droit CALCULÉE
+    // sur les seules parcelles de la société auditée : la phrase parle
+    // d'elle, elle ne peut pas compter celles des autres.
     poser('hypo_attente', { date: aujourdhui() });
     if (parc.demembre > 0) {
       poser('nature_droit_orange', { parcelles: parc.demembre, codes: (parc.codes ?? []).join(', ') });
@@ -131,6 +194,9 @@ export default async function handler(req, res) {
     const parCouleur = { canard: 0, jaune: 0, orange: 0, carmin: 0 };
     for (const v of voyants) {
       const p = PHRASES[v.code];
+      // Un code de phrase inconnu ne doit pas faire tomber toute
+      // l'analyse : on le compte à part et on continue.
+      if (!p) { console.error('[MARTEAU] bloc de phrase inconnu :', v.code); continue; }
       const rid = refId(p.famille, p.voyant);
       if (!rid) continue;
       await sql`
@@ -149,7 +215,7 @@ export default async function handler(req, res) {
     // Le K-bis n'y est pas : il est demandé par l'étude elle-même, jamais
     // au client (arbitrage 07/09). L'état hypothécaire a son cycle propre
     // (à saisir → saisie → reçu → analysé), il est saisi au logiciel métier.
-//
+    //
     // Chaque pièce porte MAINTENANT son code documentaire : c'est lui qui
     // donne le sous-dossier Drive et le nom de fichier attendu. Les deux
     // colonnes sont indépendantes — `famille` est l'axe d'ANALYSE (quel
@@ -224,6 +290,9 @@ export default async function handler(req, res) {
     await journaliser(d.id, String(qui).trim().toUpperCase(), 'analyse calculée', {
       pieces_demandables: demandables,
       voyants: voyants.length, ...parCouleur,
+      // La ventilation part au journal : un audit doit pouvoir dire, après
+      // coup, sur quel périmètre il a été établi.
+      parcelles: { auditee: parc.total, autres: parc.autres },
     });
     const [{ tete: empreinte }] = await sql`SELECT marteau_journal_tete() AS tete`;
 
@@ -239,6 +308,14 @@ export default async function handler(req, res) {
       dossier: d.reference,
       voyants: voyants.length,
       ...parCouleur,
+      parcelles: {
+        auditee: parc.total,
+        autres: parc.autres,
+        detail: autresSocietes.map((s) => ({
+          siren: s.siren, denomination: s.denomination ?? null,
+          parcelles: s.parcelles, contenance: Number(s.contenance),
+        })),
+      },
       rangement,
       ...(ecartsRangement.length ? { anomalies_rangement: ecartsRangement } : {}),
       journal_tete: empreinte,

@@ -219,6 +219,13 @@ async function lister(res, { clos = false } = {}) {
              WHERE p.dossier_id = d.id AND p.statut IN ('demandable','a_saisir'))::int AS pieces_demandables,
            (SELECT count(*) FROM marteau_parcelle pa
              WHERE pa.dossier_id = d.id AND pa.en_perimetre)::int AS parcelles,
+           -- Ventilation : les parcelles publiées au nom de la SOCIÉTÉ
+           -- AUDITÉE, et le reste du périmètre (sociétés liées entrées par
+           -- la descente du 09/09). Un total seul laisserait croire que
+           -- tout appartient à la société auditée.
+           (SELECT count(*) FROM marteau_parcelle pa
+             WHERE pa.dossier_id = d.id AND pa.en_perimetre
+               AND pa.siren_proprietaire = d.siren_tete)::int AS parcelles_auditee,
            (SELECT count(*) FROM marteau_voyant v
              WHERE v.dossier_id = d.id AND v.couleur = 'carmin')::int AS carmin,
            (SELECT count(*) FROM marteau_voyant v
@@ -246,6 +253,8 @@ async function lister(res, { clos = false } = {}) {
     ouvert_le: l.ouvert_le,
     clos_le: l.clos_le,
     parcelles: l.parcelles,
+    parcelles_auditee: l.parcelles_auditee,
+    parcelles_autres: l.parcelles - l.parcelles_auditee,
     // Un dossier reste PROVISOIRE tant qu'une réserve est ouverte. Deux
     // états, pas plus.
     etat: l.reserves_ouvertes ? 'provisoire' : 'definitif_possible',
