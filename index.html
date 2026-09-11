@@ -245,6 +245,22 @@ const REDPAR = 'https://redpar-backend.vercel.app';
 const OUTIL = (p) => `https://${p}-jean-francoisdumetz-7391s-projects.vercel.app/`;
 const MATRICE_URL = OUTIL('matrice').slice(0, -1);
 
+// ROUTE UNIQUE DU CYCLE DE VIE D'UN DOSSIER (fusion du 10/09/2026).
+// /api/etat, /api/lever et /api/demander ont été réunis dans /api/dossier
+// pour tenir sous le plafond de douze fonctions du plan Hobby. La lecture
+// reste un GET ; tout le reste passe par un POST porteur d'une `action`.
+// Les trois anciennes adresses n'existent plus : ne pas les réintroduire.
+const DOSSIER = '/api/dossier';
+const posterDossier = async (action, corps) => {
+  const r = await fetch(DOSSIER, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(Object.assign({ action }, corps)),
+  });
+  const d = await r.json();
+  if (!r.ok) throw new Error(d.erreur || 'échec');
+  return d;
+};
+
 const $ = (s) => document.querySelector(s);
 const e = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const n = (v) => Number(v || 0).toLocaleString('fr-FR');
@@ -598,7 +614,7 @@ $('#ouvre').addEventListener('click', () => {
 // réserves ouvertes, sociétés du périmètre, queue du journal chaîné.
 async function afficherEtat(ref) {
   $('#etat-res').innerHTML = '<div class="att">Lecture du dossier ' + e(ref) + '…</div>';
-  const r = await fetch('/api/etat?dossier=' + encodeURIComponent(ref));
+  const r = await fetch(DOSSIER + '?dossier=' + encodeURIComponent(ref));
   const d = await r.json();
   if (!r.ok) { $('#etat-res').innerHTML = '<div class="alerte">' + e(d.erreur) + '</div>'; return; }
 
@@ -689,13 +705,7 @@ async function afficherEtat(ref) {
   const cochees = (nature) => [].slice.call(document.querySelectorAll('#registre .ckp:checked'))
     .filter((k) => !nature || k.dataset.nature === nature).map((k) => Number(k.dataset.id));
   const quiDem = () => ($('#collab').value || $('#assoc').value || 'JFD').trim().toUpperCase();
-  const appelDem = async (action, pieces) => {
-    const r = await fetch('/api/demander', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ dossier: ref, pieces, qui: quiDem(), action }) });
-    const d = await r.json();
-    if (!r.ok) throw new Error(d.erreur || 'échec');
-    return d;
-  };
+  const appelDem = (action, pieces) => posterDossier(action, { dossier: ref, pieces, qui: quiDem() });
   $('#preparer').addEventListener('click', async () => {
     const pieces = cochees('piece');
     if (!pieces.length) { $('#demandes-res').innerHTML = '<div class="alerte">Cochez au moins une pièce.</div>'; return; }
@@ -739,12 +749,7 @@ async function afficherEtat(ref) {
       const qui = ($('#collab').value || $('#assoc').value || 'JFD').trim().toUpperCase();
       b.disabled = true;
       try {
-        const r = await fetch('/api/lever', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ dossier: ref, reserve: b.dataset.code, motif: motif.trim(), qui, code }),
-        });
-        const d = await r.json();
-        if (!r.ok) throw new Error(d.erreur || 'levée refusée');
+        await posterDossier('lever', { dossier: ref, reserve: b.dataset.code, motif: motif.trim(), qui, code });
         await afficherEtat(ref);
       } catch (err) {
         b.disabled = false;
@@ -778,13 +783,10 @@ $('#enreg').addEventListener('click', async () => {
   $('#enreg').disabled = true;
   $('#enreg-res').innerHTML = '<div class="att">Ouverture du dossier…</div>';
   try {
-    const r1 = await fetch('/api/dossier', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ siren: PHOTO.societe.siren, denomination: PHOTO.societe.denomination,
-        associe, collaborateur: collab || null, qui: collab || associe }),
+    const d1 = await posterDossier('ouvrir', {
+      siren: PHOTO.societe.siren, denomination: PHOTO.societe.denomination,
+      associe, collaborateur: collab || null, qui: collab || associe,
     });
-    const d1 = await r1.json();
-    if (!r1.ok) throw new Error(d1.erreur || 'ouverture refusée');
 
     $('#enreg-res').innerHTML = '<div class="att">Dossier ' + e(d1.dossier)
       + (d1.repris ? ' repris' : ' ouvert') + ' — collecte en cours (REDPAR, BODACC)…</div>';
