@@ -293,7 +293,15 @@ async function lire(res, ref) {
   const societes = await sql`
     SELECT siren, denomination, niveau, niveau_confiance, role_fusion,
            origine, sources_bodacc, collecte_complete, denominations_anterieures,
-           etat_administratif, creee_le, siege_registre, dirigeants
+           etat_administratif, creee_le, siege_registre, dirigeants,
+           -- Les parcelles publiées au nom de CETTE société. Sous-requête
+           -- corrélée : le tableau des sociétés du périmètre doit pouvoir
+           -- dire qui porte quoi, sinon un total agrégé laisse croire que
+           -- tout est à la société auditée.
+           (SELECT count(*) FROM marteau_parcelle p
+             WHERE p.dossier_id = marteau_societe.dossier_id
+               AND p.en_perimetre
+               AND p.siren_proprietaire = marteau_societe.siren)::int AS parcelles
       FROM marteau_societe WHERE dossier_id = ${d.id}
      ORDER BY niveau, siren
   `;
@@ -301,7 +309,9 @@ async function lire(res, ref) {
   const [parc] = await sql`
     SELECT count(*)::int AS total,
            count(*) FILTER (WHERE a_confirmer)::int AS a_confirmer,
-           count(DISTINCT commune_insee)::int AS communes
+           count(DISTINCT commune_insee)::int AS communes,
+           count(*) FILTER (WHERE siren_proprietaire = ${d.siren_tete})::int AS auditee,
+           count(DISTINCT commune_insee) FILTER (WHERE siren_proprietaire = ${d.siren_tete})::int AS communes_auditee
       FROM marteau_parcelle WHERE dossier_id = ${d.id} AND en_perimetre
   `;
 
@@ -385,7 +395,7 @@ async function lire(res, ref) {
       pieces:   { recues: pieces.recues, demandees: pieces.demandees, demandables: pieces.demandables },
       reserves: { levees: reserves.length - ouvertes, total: reserves.length },
     },
-    parcelles: parc,
+    parcelles: { ...parc, autres: parc.total - parc.auditee },
     societes,
     familles: dix,
     reserves,
