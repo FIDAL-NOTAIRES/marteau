@@ -44,6 +44,7 @@ import { db, journaliser } from '../lib/db.js';
 import {
   FAMILLES_DOC,
   SOUS_FAMILLES,
+  ORDRE_FAMILLES,
   familleDe,
   sousFamille,
   cheminDrive,
@@ -406,9 +407,11 @@ async function inventaire(res, { dossier, groupe, bac }) {
 
   const ranges = lignes.filter((l) => l.statut === 'range');
 
-  const familles = Object.entries(FAMILLES_DOC).map(([fam, libelle]) => ({
+  // ORDRE_FAMILLES et non Object.keys : voir le piège documenté en tête de
+  // lib/nomenclature.js — sans lui, la fiscalité sort avant l'identité.
+  const familles = ORDRE_FAMILLES.map((fam) => ({
     code: fam,
-    libelle,
+    libelle: FAMILLES_DOC[fam],
     pieces: ranges
       .filter((l) => familleDe(l.code) === fam)
       .map((l) => ({
