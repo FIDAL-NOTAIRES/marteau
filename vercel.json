@@ -30,6 +30,9 @@
     },
     "api/entreprises.js": {
       "maxDuration": 30
+    },
+    "api/documents.js": {
+      "maxDuration": 60
     }
   },
   "crons": [
