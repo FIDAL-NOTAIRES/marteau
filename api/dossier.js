@@ -28,6 +28,7 @@
 //     preparer  { dossier, pieces[], qui }
 //     marquer   { dossier, pieces[], qui }
 //     saisir    { dossier, pieces[], qui }
+//     histo     { dossier, etape: 'references' | 'enregistrer', resultats?, situation?, qui? }
 //
 // COMPATIBILITÉ : un POST sans `action` mais avec `siren` vaut `ouvrir`,
 // et les GET de lecture sont inchangés. La façade existante continue donc
@@ -68,6 +69,64 @@ const DESTINATAIRES = {
 };
 
 // =====================================================================
+// HISTO — filiation cadastrale (11/10/2026, arbitrage JFD)
+// La FAÇADE appelle HISTO elle-même (l'appel exige le jeton Google du
+// collaborateur, que le serveur n'a pas) ; cette action ne fait que
+//   etape « references » : rendre les parcelles de la société auditée ;
+//   etape « enregistrer » : garder la réponse avec chaque parcelle et
+//                           journaliser le compte.
+// HISTO n'est qu'un APPUI : il n'écrit qu'un fait cadastral, jamais un
+// voyant ; c'est l'analyse qui en tire le voyant jaune de la famille 2.
+//
+// 13/10/2026 — contrat 1.2 de HISTO : chaque parcelle porte aussi ses
+// BESOINS (état hypothécaire, document d'arpentage). Ils sont gardés dans
+// `histo_besoins` (migration 010) et comptés au journal. HISTO signale,
+// MARTEAU pilote : l'usage qu'en fera le registre des pièces reste à
+// arbitrer, rien n'est demandé à personne à ce stade.
+// =====================================================================
+async function histo(res, corps) {
+  const ref = String(corps.dossier ?? '').trim();
+  if (!ref) return res.status(400).json({ erreur: 'dossier requis' });
+  const sql = db();
+  const [d] = await sql`SELECT id, siren_tete FROM marteau_dossier WHERE reference = ${ref}`;
+  if (!d) return res.status(404).json({ erreur: `dossier ${ref} inconnu` });
+  if ((corps.etape ?? 'references') === 'references') {
+    const lignes = await sql`
+      SELECT code_parcelle, commune_insee FROM marteau_parcelle
+       WHERE dossier_id = ${d.id} AND en_perimetre AND siren_proprietaire = ${d.siren_tete}
+       ORDER BY commune_insee, code_parcelle`;
+    return res.status(200).json({ dossier: ref, references: lignes });
+  }
+  const resultats = Array.isArray(corps.resultats) ? corps.resultats : [];
+  const qui = String(corps.qui ?? '').trim() || 'MARTEAU';
+  let ecrites = 0, avecMouvement = 0;
+  const besoinsParType = {};
+  for (let i = 0; i < resultats.length; i += 200) {
+    const lot = resultats.slice(i, i + 200).filter((x) => x && x.code_parcelle);
+    if (!lot.length) continue;
+    await sql`
+      UPDATE marteau_parcelle AS p SET histo = t.h::jsonb, histo_besoins = t.b::jsonb, histo_lu_le = now()
+        FROM unnest(${lot.map((x) => x.code_parcelle)}::text[],
+                    ${lot.map((x) => JSON.stringify(x.mouvements ?? []))}::text[],
+                    ${lot.map((x) => JSON.stringify(x.besoins ?? []))}::text[]) AS t(code, h, b)
+       WHERE p.dossier_id = ${d.id} AND p.code_parcelle = t.code`;
+    ecrites += lot.length;
+    avecMouvement += lot.filter((x) => (x.mouvements ?? []).length).length;
+    for (const x of lot) {
+      for (const t of new Set((x.besoins ?? []).map((b) => b && b.type).filter(Boolean))) {
+        besoinsParType[t] = (besoinsParType[t] ?? 0) + 1;
+      }
+    }
+  }
+  await journaliser(d.id, qui, 'filiation cadastrale lue (HISTO)', {
+    parcelles: ecrites, avec_mouvement: avecMouvement, situation_dfi: corps.situation ?? null,
+    // nombre de PARCELLES concernées par type de besoin, pas de besoins
+    besoins: besoinsParType,
+  });
+  return res.status(200).json({ dossier: ref, ecrites, avec_mouvement: avecMouvement, besoins: besoinsParType });
+}
+
+// =====================================================================
 // Aiguillage
 // =====================================================================
 
@@ -104,9 +163,10 @@ export default async function handler(req, res) {
       case 'preparer':
       case 'marquer':
       case 'saisir':   return await pieces(res, corps, action);
+      case 'histo':    return await histo(res, corps);
       default:
         return res.status(400).json({
-          erreur: 'action attendue : ouvrir | lister | lire | lever | preparer | marquer | saisir',
+          erreur: 'action attendue : ouvrir | lister | lire | lever | preparer | marquer | saisir | histo',
         });
     }
   } catch (e) {

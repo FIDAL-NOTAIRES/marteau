@@ -14,6 +14,8 @@
 //   • famille 1 : dénominations successives au BODACC (orange si > 1) ;
 //   • famille 5 : NATURE DU DROIT — orange dès qu'une parcelle porte un
 //     code de droit autre que P (les pastilles orange de la façade) ;
+//   • famille 2 encore : MOUVEMENT CADASTRAL lu dans HISTO (11/10/2026),
+//     jaune et jamais plus ;
 //   • tout le reste ouvre en jaune, chacun avec son motif d'attente.
 // Le reste s'allumera source par source, au fur et à mesure des
 // branchements (RISQUES, ADEME, Sitadel, TRENTE…).
@@ -148,6 +150,26 @@ export default async function handler(req, res) {
           + `${Number(s.contenance).toLocaleString('fr-FR')} m²`;
       }).join(' ; ');
       poser('designation_perimetre_elargi', { autres: parc.autres, detail });
+    }
+
+    // Filiation cadastrale (HISTO, 11/10/2026) : parcelles de la société
+    // auditée issues d'un mouvement cadastral. Lu en base (colonne `histo`,
+    // migration 010) : l'analyse n'appelle jamais HISTO elle-même.
+    const mouv = await sql`
+      SELECT code_parcelle, commune_nom, histo FROM marteau_parcelle
+       WHERE dossier_id = ${d.id} AND en_perimetre AND siren_proprietaire = ${d.siren_tete}
+         AND histo IS NOT NULL AND jsonb_array_length(histo) > 0
+       ORDER BY commune_nom, code_parcelle`.catch(() => []);   // colonne absente tant que 010 n'est pas passée
+    if (mouv.length) {
+      const exemples = mouv.slice(0, 8).map((m) => {
+        const x = (m.histo ?? [])[0] ?? {};
+        const lib = String(m.code_parcelle).replace(/^\d{5}0{3}/, '').replace(/^([A-Z0-9]{2})0*(\d+)$/, '$1 $2').trim();
+        return `${m.commune_nom ? m.commune_nom + ' ' : ''}${lib}, issue de ${x.nature || 'un mouvement'}${(x.origines ?? []).length ? ' de ' + x.origines.join(', ') : ''}${x.annee ? ' (' + x.annee + ')' : ''}`;
+      });
+      poser('designation_mouvement_cadastral', {
+        nombre: mouv.length,
+        detail: exemples.join(' ; ') + (mouv.length > 8 ? ` ; et ${mouv.length - 8} autre(s)` : ''),
+      });
     }
 
     // 3. propriété
