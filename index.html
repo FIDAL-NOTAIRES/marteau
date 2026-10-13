@@ -296,6 +296,9 @@
 </footer>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<!-- 11/10/2026 — jeton Google de la connexion du matin, pour appeler HISTO (le client GSI d'abord : piège acces.js du 03/10) -->
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<script src="https://connexion-omega.vercel.app/acces.js" defer></script>
 <script>
 const REDPAR = 'https://redpar-backend.vercel.app';
 const OUTIL = (p) => `https://${p}-jean-francoisdumetz-7391s-projects.vercel.app/`;
@@ -784,8 +787,10 @@ async function afficherEtat(ref) {
   $('#relancer').addEventListener('click', async () => {
     const b = $('#relancer');
     b.disabled = true;
-    b.textContent = 'Analyse en cours…';
+    b.textContent = 'Filiation cadastrale…';
     try {
+      await lancerHisto(ref, quiDem(), (t) => { b.textContent = t.length > 60 ? 'Filiation cadastrale…' : t; });
+      b.textContent = 'Analyse en cours…';
       const r = await fetch('/api/analyser', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ dossier: ref, qui: quiDem() }),
@@ -959,6 +964,8 @@ $('#enreg').addEventListener('click', async () => {
       + '<p class="att" style="margin:8px 0 4px">Empreinte de tête de la piste d\'audit — à ancrer hors de la base, elle change à chaque événement :</p>'
       + '<pre style="font-size:11px">' + e(d2.journal_tete || '—') + '</pre>';
     $('#ref').value = d2.dossier;
+    // HISTO d'office (11/10/2026), puis l'analyse, qui ne lit que la base.
+    await lancerHisto(d2.dossier, collab || associe, (t) => { const z = $('#enreg-res'); if (z) z.insertAdjacentHTML('beforeend', '<p class="att histo-etat">' + e(t) + '</p>'); });
     // L'analyse suit la collecte : elle ne lit que la base.
     await fetch('/api/analyser', { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ dossier: d2.dossier, qui: collab || associe }) });
@@ -967,6 +974,64 @@ $('#enreg').addEventListener('click', async () => {
     $('#enreg-res').innerHTML = '<div class="alerte">' + e(err.message) + '</div>';
   } finally { $('#enreg').disabled = false; }
 });
+
+/* ---------- HISTO — filiation cadastrale (11/10/2026, arbitrage JFD) ----------
+   Appelé d'office après la collecte et à chaque nouvelle analyse : la façade
+   demande les parcelles de la société auditée, interroge HISTO par lots de
+   100 (trois à la fois) avec le jeton Google du collaborateur, et fait garder
+   la réponse en base. Jamais bloquant : si HISTO ou le jeton manquent,
+   l'analyse se fait sans, et le dit.
+   13/10/2026 — contrat 1.2 : les BESOINS de chaque parcelle (état
+   hypothécaire, document d'arpentage) sont transmis tels quels et gardés. */
+const HISTO_URL = 'https://histo-sand.vercel.app/api/filiation';
+function refHisto(x) {
+  const c = String(x.code_parcelle || '').replace(/\s+/g, '').toUpperCase();
+  let m = /^(\d[\dAB]\d{3})(\d{3})([A-Z0-9]{1,2})(\d{1,4})$/.exec(c);
+  if (m) return { insee: m[1], prefixe: m[2], section: m[3], numero: m[4], identifiant: x.code_parcelle };
+  m = /([A-Z]{1,2})0*(\d{1,4})$/.exec(c);
+  return m && x.commune_insee ? { insee: x.commune_insee, prefixe: '000', section: m[1], numero: m[2], identifiant: x.code_parcelle } : null;
+}
+async function lancerHisto(ref, qui, montrer = () => {}) {
+  try {
+    if (!window.FidalAcces || !FidalAcces.jeton) { montrer('Filiation cadastrale : connexion Google indisponible, analyse sans HISTO.'); return null; }
+    const jeton = await FidalAcces.jeton();
+    if (!jeton) { montrer('Filiation cadastrale : pas de jeton Google (ouvrez la connexion du matin), analyse sans HISTO.'); return null; }
+    const r0 = await fetch('/api/dossier', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'histo', etape: 'references', dossier: ref }) });
+    const d0 = await r0.json(); if (!r0.ok) throw new Error(d0.erreur || 'références indisponibles');
+    const refs = (d0.references || []).map(refHisto).filter(Boolean);
+    if (!refs.length) return null;
+    const lots = []; for (let i = 0; i < refs.length; i += 100) lots.push(refs.slice(i, i + 100));
+    const resultats = []; let faits = 0, situation = null;
+    const unLot = async (lot) => {
+      const r = await fetch(HISTO_URL, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + jeton },
+        body: JSON.stringify({ appelant: 'marteau', references: lot }) });
+      const j = await r.json(); if (!r.ok) throw new Error(j.erreur || ('HISTO ' + r.status));
+      situation = (j.histo && j.histo.situation_dfi) || situation;
+      for (const p of (j.resultats || [])) {
+        if (p.statut === 'erreur') continue;
+        const arbre = Array.isArray(p.arbre) ? p.arbre : [];
+        // le mouvement DONT la parcelle actuelle est issue (premier niveau), dans les trente ans
+        const mouvements = arbre.filter((m) => m.profondeur === 0 && !m.au_dela_30_ans && ((m.parcelles_origine || []).length || /extraction/i.test(m.nature || '')))
+          .map((m) => ({ nature: m.nature || 'mouvement', origines: (m.parcelles_origine || []).map((o) => o.libelle || ((o.section || '') + ' ' + (o.numero || ''))),
+                         annee: m.document && m.document.annee ? String(m.document.annee) : (m.document && m.document.date_effet ? String(m.document.date_effet).slice(0, 4) : null) }));
+        // contrat 1.2 : les besoins repérés par HISTO, transmis tels quels (absents des contrats antérieurs)
+        const besoins = Array.isArray(p.besoins) ? p.besoins : [];
+        resultats.push({ code_parcelle: p.identifiant || (p.reference && p.reference.identifiant), mouvements, besoins });
+      }
+      faits++; montrer(`Filiation cadastrale (HISTO) : lot ${faits} sur ${lots.length}…`);
+    };
+    for (let i = 0; i < lots.length; i += 3) await Promise.all(lots.slice(i, i + 3).map(unLot));
+    const r2 = await fetch('/api/dossier', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'histo', etape: 'enregistrer', dossier: ref, qui, situation, resultats: resultats.filter((x) => x.code_parcelle) }) });
+    const d2 = await r2.json(); if (!r2.ok) throw new Error(d2.erreur || 'enregistrement en échec');
+    const b = d2.besoins || {};
+    const besoinsTxt = [b['etat-hypothecaire'] ? b['etat-hypothecaire'] + ' à couvrir par état hypothécaire' : '',
+                        b['document-arpentage'] ? b['document-arpentage'] + ' appelant un document d\'arpentage' : ''].filter(Boolean).join(', ');
+    montrer(`Filiation cadastrale (HISTO) : ${d2.ecrites} parcelles lues, ${d2.avec_mouvement} issues d'un mouvement cadastral`
+      + (besoinsTxt ? ` ; ${besoinsTxt}.` : '.'));
+    return d2;
+  } catch (err) { montrer('Filiation cadastrale : ' + err.message + ' — analyse sans HISTO.'); return null; }
+}
 
 $('#q').addEventListener('keydown', (ev) => { if (ev.key === 'Enter') $('#go').click(); });
 </script>
