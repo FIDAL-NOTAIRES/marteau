@@ -163,7 +163,8 @@ export default async function handler(req, res) {
     if (mouv.length) {
       const exemples = mouv.slice(0, 8).map((m) => {
         const x = (m.histo ?? [])[0] ?? {};
-        const lib = String(m.code_parcelle).replace(/^\d{5}0{3}/, '').replace(/^([A-Z0-9]{2})0*(\d+)$/, '$1 $2').trim();
+        // section d'une lettre complétée d'un zéro par le cadastre (« 0Z ») : on retire ce zéro (13/10/2026)
+        const lib = String(m.code_parcelle).replace(/^\d{5}0{3}/, '').replace(/^([A-Z0-9]{2})0*(\d+)$/, (x, sec, num) => `${sec.replace(/^0(?=[A-Z])/, '')} ${num}`).trim();
         return `${m.commune_nom ? m.commune_nom + ' ' : ''}${lib}, issue de ${x.nature || 'un mouvement'}${(x.origines ?? []).length ? ' de ' + x.origines.join(', ') : ''}${x.annee ? ' (' + x.annee + ')' : ''}`;
       });
       poser('designation_mouvement_cadastral', {
