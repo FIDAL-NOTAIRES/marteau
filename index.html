@@ -94,6 +94,9 @@
   .ligne-dossier .chiffre b{color:var(--nuit);font-weight:600}
   footer{color:var(--gris);font-size:11px;text-align:center;padding:20px}
 .barre-ecran{display:flex;align-items:center;gap:14px;margin:0 0 14px}
+.nav-d{display:inline-block;padding:6px 14px;border:1px solid #d6d3d1;border-radius:999px;background:#fff;color:var(--nuit);text-decoration:none;font-size:13.5px;font-weight:600}
+.nav-d:hover{background:#eef4f5}
+[id^="sec-"]{scroll-margin-top:60px}
 </style>
 </head>
 <body>
@@ -152,6 +155,7 @@
       Les audits ouverts, les plus récents d'abord. Le bandeau de couleur de chaque ligne est
       la plus grave de ses familles. Cliquez une ligne pour afficher son état.
     </p>
+    <input type="text" id="filtre-dossiers" placeholder="Filtrer par société ou référence…" autocomplete="off" style="margin:0 0 10px;max-width:420px">
     <div id="liste-dossiers" class="att">Lecture…</div>
     <div class="rang" style="margin-top:14px;padding-top:12px;border-top:1px solid var(--bord)">
       <div style="flex:0 0 220px">
@@ -171,9 +175,9 @@
     <div class="barre-ecran">
       <span class="att">Biens de la société — rien n'est écrit tant que le dossier n'est pas enregistré.</span></div>
     <div class="provisoire">
-      <b>Audit version provisoire a la date du <span id="dategen"></span></b> —
-      une seule reserve suffit a l'empecher de devenir definitif. Reserve systematique ouverte :
-      <i>validation par le notaire associe en charge du dossier</i>, levable par lui seul.
+      <b>Audit version provisoire à la date du <span id="dategen"></span></b> —
+      une seule réserve suffit à l'empêcher de devenir définitif. Réserve systématique ouverte :
+      <i>validation par le notaire associé en charge du dossier</i>, levable par lui seul.
     </div>
 
     <div id="avert"></div>
@@ -231,11 +235,11 @@
     </section>
 
     <section class="carte">
-      <h2 style="font-size:18px;margin-bottom:10px">Carte a deux etages</h2>
+      <h2 style="font-size:18px;margin-bottom:10px">Carte à deux étages</h2>
       <div id="carte"></div>
       <div class="legende">
-        Niveau communal : chaque commune porte une pastille de synthese, la couleur la plus grave
-        l'emporte. Cliquez une commune puis « zoom parcellaire » pour descendre aux contours reels
+        Niveau communal : chaque commune porte une pastille de synthèse, la couleur la plus grave
+        l'emporte. Cliquez une commune puis « zoom parcellaire » pour descendre aux contours réels
         du plan cadastral, servis par REDPAR <code>/api/geo</code>.
       </div>
     </section>
@@ -254,9 +258,9 @@
     </section>
 
     <section class="carte">
-      <h2 style="font-size:18px;margin-bottom:4px">Validation fine du perimetre</h2>
+      <h2 style="font-size:18px;margin-bottom:4px">Validation fine du périmètre</h2>
       <p class="att" style="margin:0 0 12px">
-        Rien n'entre dans le perimetre sans une main sur le bouton. Decochez ce qui ne releve pas
+        Rien n'entre dans le périmètre sans une main sur le bouton. Décochez ce qui ne relève pas
         de l'audit : seules les communes cochees partent vers MATRICE.
       </p>
       <div style="overflow:auto;max-height:420px">
@@ -285,10 +289,10 @@
         <div style="flex:0 0 auto"><button class="sec" id="mat">Router ici (raccord machine)</button></div>
       </div>
       <p class="att" style="margin:-6px 0 12px">
-        MATRICE est fermee par Entra : c'est votre session qui l'ouvre. Copier puis coller dans son
-        ecran d'import donne le routage reel. Le raccord machine direct existe dans MARTEAU
+        MATRICE est fermée par Entra : c'est votre session qui l'ouvre. Copier puis coller dans son
+        écran d'import donne le routage réel. Le raccord machine direct existe dans MARTEAU
         (<code>/api/matrice</code>, toujours en simulation) et s'activera le jour ou un jeton
-        delegue ou le mot de passe de recette sera pose.
+        délégué ou le mot de passe de recette sera posé.
       </p>
       <div id="mat-res"></div>
     </section>
@@ -296,6 +300,12 @@
   <div id="page-dossier" style="display:none">
     <div class="barre-ecran">
       <span id="titre-dossier" style="font-family:Georgia,serif;font-size:17px"></span></div>
+    <!-- 15/10/2026 : navigation dans la page du dossier, collée en haut de l'écran au défilement -->
+    <nav id="nav-dossier" style="position:sticky;top:0;z-index:5;background:var(--fond,#f4f5f7);padding:8px 0 10px;margin:-6px 0 8px;display:flex;gap:6px;flex-wrap:wrap">
+      <a href="#" data-cible="sec-familles" class="nav-d">Familles</a><a href="#" data-cible="sec-reserves" class="nav-d">Réserves</a>
+      <a href="#" data-cible="sec-pieces" class="nav-d">Pièces</a><a href="#" data-cible="sec-risques" class="nav-d">Risques</a>
+      <a href="#" data-cible="sec-societes" class="nav-d">Sociétés</a><a href="#" data-cible="sec-journal" class="nav-d">Journal</a>
+    </nav>
     <section class="carte">
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px">
           <div class="jauge">
@@ -313,7 +323,7 @@
         </p>
     </section>
     <section class="carte">
-      <h2 style="font-size:18px;margin-bottom:10px">Les dix familles de risque</h2>
+      <h2 style="font-size:18px;margin-bottom:10px" id="sec-familles">Les dix familles de risque</h2>
       <div id="familles" class="att">Les familles s'affichent une fois le dossier enregistré et analysé.</div>
       <p class="att" style="margin:10px 0 0">
         Canard : tout concordant. Jaune : pièce ou information encore à obtenir. Orange : procédure,
@@ -326,7 +336,7 @@
 </main>
 
 <footer>
-  MARTEAU v0.2 — donnee de pre-controle. Seul le releve de propriete ou l'etat hypothecaire fait foi.
+  MARTEAU v0.2 — donnée de pré-contrôle. Seul le relevé de propriété ou l'état hypothécaire fait foi.
   Sources DGFiP (Licence Ouverte 2.0) et BODACC / DILA.
 </footer>
 
@@ -367,7 +377,7 @@ function pastilleCommune(c) {
   const autres = (c.droits || []).filter((d) => d && d.charAt(0) !== 'P');
   return autres.length
     ? { cl: 'p-orange', txt: 'Titre — droits autres que proprietaire : ' + autres.join(', ') }
-    : { cl: 'p-gris', txt: 'Dix familles a instruire' };
+    : { cl: 'p-gris', txt: 'Dix familles à instruire' };
 }
 
 function afficher(p) {
@@ -375,19 +385,19 @@ function afficher(p) {
   $('#resultat').classList.remove('cache');
   $('#liens-res').innerHTML = '';
   $('#dategen').textContent = new Date(p.genere_le).toLocaleDateString('fr-FR');
-  $('#titre-soc').textContent = p.societe.denomination || '(denomination inconnue)';
+  $('#titre-soc').textContent = p.societe.denomination || '(dénomination inconnue)';
   $('#ident-soc').innerHTML = 'SIREN ' + e(p.societe.siren || '—')
-    + ' · millesime FPMU ' + e(p.societe.millesime || '—')
+    + ' · millésime FPMU ' + e(p.societe.millesime || '—')
     + ' · relevé établi le ' + new Date(p.genere_le).toLocaleString('fr-FR');
 
   let av = '';
   if (p.indisponible && p.indisponible.length) {
-    av += '<div class="alerte"><b>Volet indisponible — a retraiter.</b> '
+    av += '<div class="alerte"><b>Volet indisponible — à retraiter.</b> '
       + p.indisponible.map((i) => e(i.volet) + ' : ' + e(i.motif)).join(' — ')
       + '. Les compteurs correspondants ne sont pas des zeros : ils sont inconnus.</div>';
   }
   if (p.tronque) {
-    av += '<div class="alerte"><b>Releve tronque par REDPAR.</b> Le relevé des biens est partiel ; '
+    av += '<div class="alerte"><b>Relevé tronqué par REDPAR.</b> Le relevé des biens est partiel ; '
       + 'annonces ' + n(p.agregats.total_parcelles_annonce) + ' parcelles et '
       + n(p.agregats.total_locaux_annonce) + ' locaux.</div>';
   }
@@ -436,7 +446,7 @@ function afficher(p) {
 }
 
 async function dessiner(p) {
-  if (typeof L === 'undefined') { $('#carte').innerHTML = '<p class="att" style="padding:14px">Leaflet indisponible — carte a retraiter. Le reste du relevé est intact.</p>'; return; }
+  if (typeof L === 'undefined') { $('#carte').innerHTML = '<p class="att" style="padding:14px">Leaflet indisponible — carte à retraiter. Le reste du relevé est intact.</p>'; return; }
   if (!carte) {
     carte = L.map('carte').setView([46.7, 2.4], 6);
     L.tileLayer('https://data.geopf.fr/wmts?SERVICE=WMTS&VERSION=1.0.0&REQUEST=GetTile'
@@ -495,7 +505,7 @@ async function dessiner(p) {
 async function zoomParcellaire(c) {
   const ids = c.parcelles.map((x) => x.ref).slice(0, 300).join(',');
   const r = await fetch(REDPAR + '/api/geo?insee=' + c.code_insee + '&contours=1&ids=' + encodeURIComponent(ids));
-  if (!r.ok) { $('#mat-res').innerHTML = '<div class="alerte">REDPAR /api/geo indisponible — zoom parcellaire a retraiter.</div>'; return; }
+  if (!r.ok) { $('#mat-res').innerHTML = '<div class="alerte">REDPAR /api/geo indisponible — zoom parcellaire à retraiter.</div>'; return; }
   const g = await r.json();
   if (coucheParcelles) carte.removeLayer(coucheParcelles);
   coucheParcelles = L.layerGroup().addTo(carte);
@@ -612,6 +622,14 @@ $('#retour-haut').addEventListener('click', () => {
   if (depuisDossier) { plierReprise(false); chargerListe(); }
 });
 
+$('#nav-dossier').addEventListener('click', (ev) => {
+  const a = ev.target.closest('.nav-d'); if (!a) return;
+  ev.preventDefault();
+  const c = document.getElementById(a.dataset.cible);
+  if (c) { if (c.tagName === 'DETAILS') c.open = true; c.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+});
+$('#filtre-dossiers').addEventListener('input', filtrerDossiers);
+
 ['#reprise-chevron', '#reprise-titre'].forEach((sel) => {
   const el = $(sel);
   if (el) el.addEventListener('click', () => plierReprise($('#reprise-corps').style.display !== 'none'));
@@ -623,7 +641,7 @@ $('#go').addEventListener('click', async () => {
   if (q.length < 2) { $('#etat').textContent = 'Saisissez au moins deux caracteres.'; return; }
   $('#go').disabled = true;
   const t0 = Date.now();
-  $('#etat').textContent = 'Interrogation de REDPAR — non bati et bati en parallele…';
+  $('#etat').textContent = 'Interrogation de REDPAR — non bâti et bâti en parallèle…';
   try {
     const nu = q.replace(/\s/g, '');
     if (!/^\d{9}$/.test(nu)) {
@@ -639,15 +657,16 @@ $('#go').addEventListener('click', async () => {
     $('#etat').textContent = 'Biens relevés en ' + ((Date.now() - t0) / 1000).toFixed(1) + ' s.';
     afficher(d);
     montrerEcran('photo');
+    preremplirAssocie();
   } catch (err) {
-    $('#etat').innerHTML = '<span style="color:#A01040">REDPAR indisponible — portefeuille a retraiter : '
+    $('#etat').innerHTML = '<span style="color:#A01040">REDPAR indisponible — portefeuille à retraiter : '
       + e(err.message) + '</span>';
   } finally { $('#go').disabled = false; }
 });
 
 $('#liens').addEventListener('click', async () => {
   if (!PHOTO || !PHOTO.societe.siren) {
-    $('#liens-res').innerHTML = '<div class="alerte">Aucun SIREN resolu — lancez d\'abord l\'audit.</div>';
+    $('#liens-res').innerHTML = '<div class="alerte">Aucun SIREN résolu — lancez d\'abord l\'audit.</div>';
     return;
   }
   $('#liens').disabled = true;
@@ -659,35 +678,35 @@ $('#liens').addEventListener('click', async () => {
 
     const pastille = (niv) => niv === 'structuree' ? 'p-canard' : 'p-orange';
     let h = '<p class="att">' + n(d.annonces_lues) + ' annonce(s) lue(s)'
-      + (d.tronque ? ' sur ' + n(d.annonces_total) + ' — lecture plafonnee' : '') + '.</p>';
+      + (d.tronque ? ' sur ' + n(d.annonces_total) + ' — lecture plafonnée' : '') + '.</p>';
 
     h += '<h3 style="font-size:15px;margin:14px 0 6px">Noms a interroger au fichier immobilier</h3>'
       + '<table><thead><tr><th>Denomination</th><th class="num">Annonces</th><th>Niveau</th><th>Source</th></tr></thead><tbody>'
       + d.denominations.map((x) => '<tr><td>' + e(x.denomination) + '</td>'
         + '<td class="num">' + n(x.annonces) + '</td>'
         + '<td><span class="past ' + pastille(x.niveau) + '"></span>'
-        + (x.niveau === 'structuree' ? 'donnee BODACC' : 'lecture de texte, a confirmer') + '</td>'
+        + (x.niveau === 'structuree' ? 'donnée BODACC' : 'lecture de texte, à confirmer') + '</td>'
         + '<td>' + x.sources.map((u, i) => '<a href="' + u + '" target="_blank" rel="noopener">avis '
           + (i + 1) + '</a>').join(' ') + '</td></tr>').join('')
       + '</tbody></table>';
 
     if (d.alertes_perimetre.length) {
-      h += '<h3 style="font-size:15px;margin:20px 0 6px">Alertes de perimetre</h3>';
+      h += '<h3 style="font-size:15px;margin:20px 0 6px">Alertes de périmètre</h3>';
       h += d.alertes_perimetre.map((a) => '<div class="alerte">'
         + '<b>' + e(a.denomination || a.siren) + '</b> — SIREN ' + e(a.siren)
         + (a.roles.length ? ' · ' + e(a.roles.join(', ')) : '')
         + '<br>' + e(a.motif)
         + '<br>REDPAR trouve <b>' + n(a.parcelles) + '</b> parcelles et <b>' + n(a.locaux)
         + '</b> locaux a son nom.'
-        + (a.a_confirmer ? '<br><i>Lien non qualifie — a confirmer sur l\'acte.</i>' : '')
+        + (a.a_confirmer ? '<br><i>Lien non qualifié — à confirmer sur l\'acte.</i>' : '')
         + '<br><button class="sec photo-liee" data-siren="' + e(a.siren) + '" style="margin-top:8px">'
         + 'Lancer l\'audit de cette société</button>'
         + ' <a href="' + a.sources[0] + '" target="_blank" rel="noopener" style="margin-left:8px">l\'avis au BODACC</a>'
         + '</div>').join('');
     } else {
-      h += '<p class="att" style="margin-top:14px">Aucune societe liee ne porte de biens. '
+      h += '<p class="att" style="margin-top:14px">Aucune société liée ne porte de biens. '
         + 'Cela ne veut pas dire qu\'il n\'y a pas de fusion : cela veut dire qu\'aucun bien '
-        + 'n\'est publie au nom d\'une societe liee detectee au BODACC.</p>';
+        + 'n\'est publié au nom d\'une société liée détectée au BODACC.</p>';
     }
 
     h += '<p class="att" style="margin-top:12px">' + e(d.avertissement) + '</p>';
@@ -702,7 +721,7 @@ $('#liens').addEventListener('click', async () => {
       });
     });
   } catch (err) {
-    $('#liens-res').innerHTML = '<div class="alerte">BODACC indisponible — chaine des SIREN a retraiter : '
+    $('#liens-res').innerHTML = '<div class="alerte">BODACC indisponible — chaîne des SIREN à retraiter : '
       + e(err.message) + '</div>';
   } finally { $('#liens').disabled = false; }
 });
@@ -737,7 +756,7 @@ $('#mat').addEventListener('click', async () => {
       + (d.nonResolues && d.nonResolues.length ? '<div class="alerte">' + d.nonResolues.length + ' commune(s) non identifiee(s)</div>' : '')
       + '<pre>' + e(JSON.stringify(d.envois || [], null, 1).slice(0, 4000)) + '</pre>';
   } catch (err) {
-    $('#mat-res').innerHTML = '<div class="alerte">MATRICE indisponible — demandes a retraiter : ' + e(err.message) + '</div>';
+    $('#mat-res').innerHTML = '<div class="alerte">MATRICE indisponible — demandes à retraiter : ' + e(err.message) + '</div>';
   } finally { $('#mat').disabled = false; }
 });
 
@@ -790,11 +809,11 @@ async function afficherEtat(ref) {
     + '<div style="flex:1 1 auto" class="att">Recalcule les dix familles depuis la base, sans réinterroger REDPAR ni le BODACC.</div></div>';
 
   // 14/10/2026 — rapport de RISQUES du portefeuille (mode différé)
-  h += '<div class="rang" style="margin:-4px 0 12px"><div style="flex:0 0 auto">'
-    + '<button class="sec" id="risques-go">Rapport de risques du portefeuille</button></div>'
+  h += '<div class="rang" id="sec-risques" style="margin:-4px 0 12px"><div style="flex:0 0 auto">'
+    + '<button class="sec" id="risques-go" data-sec="1">' + (d.risques && d.risques.statut === 'termine' ? 'Actualiser le rapport de risques' : 'Rapport de risques du portefeuille') + '</button></div>'
     + '<div style="flex:1 1 auto" id="risques-res">' + risquesHTML(d.risques) + '</div></div>';
 
-  h += '<h3 style="font-size:15px;margin:12px 0 6px">Réserves — ' + n(jr.total - jr.levees) + ' ouverte(s)</h3>'
+  h += '<h3 id="sec-reserves" style="font-size:15px;margin:12px 0 6px">Réserves — ' + n(jr.total - jr.levees) + ' ouverte(s)</h3>'
     + '<table><thead><tr><th></th><th>Réserve</th><th>Ouverte le</th><th>Levée</th></tr></thead><tbody>'
     + d.reserves.map((x) => '<tr' + (x.levee_le ? ' class="off"' : '') + '>'
       + '<td><span class="past ' + (x.levee_le ? 'p-canard' : 'p-orange') + '"></span></td>'
@@ -807,7 +826,7 @@ async function afficherEtat(ref) {
   const STATUT = { demandable: 'à demander', a_saisir: 'à saisir au logiciel métier', demandee: 'demandée', relancee: 'relancée',
     saisie: 'saisie', recu_a_analyser: 'reçu — à analyser', recue: 'reçue', analyse: 'analysé' };
   const DEST = { client: 'client', mairie: 'mairie', publicite_fonciere: 'publicité foncière', prefecture_ars: 'préfecture / ARS', expert_comptable: 'expert-comptable' };
-  h += '<h3 style="font-size:15px;margin:16px 0 6px">Registre des pièces — ' + n(jp.demandables || 0) + ' à demander, ' + n(jp.demandees) + ' demandée(s), ' + n(jp.recues) + ' reçue(s)</h3>'
+  h += '<h3 id="sec-pieces" style="font-size:15px;margin:16px 0 6px">Registre des pièces — ' + n(jp.demandables || 0) + ' à demander, ' + n(jp.demandees) + ' demandée(s), ' + n(jp.recues) + ' reçue(s)</h3>'
     + '<table id="registre"><thead><tr><th style="width:28px"></th><th>Fam.</th><th>Pièce</th><th>Rangement</th><th>Destinataire</th><th>Statut</th><th>Depuis</th></tr></thead><tbody>'
     + (d.registre || []).map((x) => {
         const cochable = x.statut === 'demandable' || x.statut === 'a_saisir';
@@ -837,7 +856,7 @@ async function afficherEtat(ref) {
   // la descente sur les filiales fait entrer les parcelles des sociétés
   // liées dans le périmètre.
   const pa = d.parcelles;
-  h += '<h3 style="font-size:15px;margin:16px 0 6px">Sociétés du périmètre — '
+  h += '<h3 id="sec-societes" style="font-size:15px;margin:16px 0 6px">Sociétés du périmètre — '
     + n(pa.auditee ?? pa.total) + ' parcelle(s) au nom de la société auditée'
     + (pa.communes_auditee ? ' sur ' + n(pa.communes_auditee) + ' communes' : '')
     + (pa.autres ? ', <span style="color:var(--orange)">' + n(pa.autres) + ' au nom de sociétés liées</span>' : '')
@@ -862,11 +881,16 @@ async function afficherEtat(ref) {
     + '</details>').join('');
   $('#familles').classList.remove('att');
 
-  h += '<h3 style="font-size:15px;margin:16px 0 6px">Piste d\'audit — chaîne ' + e(d.journal.chaine.etat) + '</h3>'
+  // 15/10/2026 : piste d'audit REPLIÉE par défaut (consultée rarement) ; l'en-tête garde
+  // l'essentiel : nombre d'événements et état de la chaîne
+  h += '<details id="sec-journal" style="margin:16px 0 6px"><summary style="cursor:pointer;font-family:Georgia,serif;font-size:15px">'
+    + 'Piste d\'audit — ' + n(d.journal.lignes.length) + ' événement(s) — chaîne <b style="color:'
+    + (d.journal.chaine.etat === 'intègre' ? 'var(--canard)' : 'var(--carmin,#A01040)') + '">' + e(d.journal.chaine.etat) + '</b>'
+    + ' <span class="att" style="font-family:inherit;font-size:12.5px">— cliquer pour déplier</span></summary>'
     + '<table><thead><tr><th>Le</th><th>Qui</th><th>Quoi</th></tr></thead><tbody>'
     + d.journal.lignes.map((x) => '<tr><td>' + new Date(x.le).toLocaleString('fr-FR') + '</td><td>' + e(x.qui) + '</td><td>' + e(x.quoi) + '</td></tr>').join('')
     + '</tbody></table>'
-    + '<p class="att" style="margin:8px 0 4px">Empreinte de tête :</p><pre style="font-size:11px">' + e(d.journal.tete || '—') + '</pre>';
+    + '<p class="att" style="margin:8px 0 4px">Empreinte de tête :</p><pre style="font-size:11px">' + e(d.journal.tete || '—') + '</pre></details>';
 
   $('#etat-res').innerHTML = h;
 
@@ -961,6 +985,14 @@ async function afficherEtat(ref) {
 // Les dossiers CLOS ne sortent pas par defaut : ils sont derriere un
 // filtre (arbitrage du 10/09/2026). Un clic sur une ligne affiche l'etat.
 let CLOS = false;
+// 15/10/2026 : filtre de la liste des dossiers (société, SIREN, référence, associé)
+function filtrerDossiers() {
+  const q = ($('#filtre-dossiers').value || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  document.querySelectorAll('#liste-dossiers .ligne-dossier').forEach((l) => {
+    const t = l.textContent.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    l.style.display = !q || t.includes(q) ? '' : 'none';
+  });
+}
 async function chargerListe() {
   const cible = $('#liste-dossiers');
   cible.innerHTML = 'Lecture…';
@@ -993,6 +1025,7 @@ async function chargerListe() {
         + '<div class="chiffre"><b>' + (x.etat === 'provisoire' ? 'provisoire' : 'définitif possible') + '</b></div>'
         + '</div>';
     }).join('');
+    filtrerDossiers();
     cible.querySelectorAll('.ligne-dossier').forEach((l) => l.addEventListener('click', () => {
       $('#ref').value = l.dataset.ref;
       $('#rouvrir').click();
@@ -1023,9 +1056,31 @@ $('#ref').addEventListener('keydown', (ev) => { if (ev.key === 'Enter') $('#rouv
 // reprend) le dossier, /api/collecter écrit ce que photo et liens rendent.
 // Si la collecte échoue, le dossier existe quand même — le rapport doit
 // toujours pouvoir sortir.
+// 15/10/2026 : l'associé en charge est PRÉ-REMPLI — celui qui est connecté (nom tiré du
+// compte Google, via le jeton de la connexion du matin), à défaut le dernier choisi sur ce poste.
+async function preremplirAssocie() {
+  const sel = $('#assoc'); if (!sel || sel.value) return;
+  const choisir = (v) => { if (v && [...sel.options].some((o) => o.value === v)) { sel.value = v; return true; } return false; };
+  try {
+    if (window.FidalAcces && FidalAcces.jeton) {
+      const jeton = await FidalAcces.jeton();
+      if (jeton) {
+        const r = await fetch('https://www.googleapis.com/drive/v3/about?fields=user(displayName,emailAddress)', { headers: { Authorization: 'Bearer ' + jeton } });
+        const u = r.ok ? (await r.json()).user || {} : {};
+        const sansAccent = (x) => String(x || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase();
+        const nom = sansAccent((u.emailAddress || '').split('@')[0].split('.').pop());
+        const o = [...sel.options].find((o) => o.value && nom && sansAccent(o.textContent).split(/[\s—-]+/)[0] === nom);
+        if (o) { sel.value = o.value; return; }
+      }
+    }
+  } catch (e) { /* on retombe sur le dernier choix */ }
+  try { choisir(localStorage.getItem('marteau.associe')); } catch (e) {}
+}
+$('#assoc').addEventListener('change', () => { try { localStorage.setItem('marteau.associe', $('#assoc').value); } catch (e) {} });
+
 $('#enreg').addEventListener('click', async () => {
   if (!PHOTO || !PHOTO.societe.siren) {
-    $('#enreg-res').innerHTML = '<div class="alerte">Aucun SIREN resolu — lancez d\'abord l\'audit.</div>';
+    $('#enreg-res').innerHTML = '<div class="alerte">Aucun SIREN résolu — lancez d\'abord l\'audit.</div>';
     return;
   }
   const associe = $('#assoc').value.trim().toUpperCase();
@@ -1145,6 +1200,7 @@ function risquesHTML(rq) {
   if (rq.statut === 'echec') return '<span class="alerte" style="display:inline-block;padding:4px 8px">Échec : ' + e(rq.cause || 'inconnu') + ' — relancer.</span>';
   if (rq.statut === 'expire' || (rq.expire_le && new Date(rq.expire_le) < new Date())) return '<span class="att">Le rapport du ' + (rq.maj_le ? new Date(rq.maj_le).toLocaleDateString('fr-FR') : '—') + ' a expiré (trente jours) : le commander à nouveau.</span>';
   if (rq.statut === 'termine') return '<a href="' + e(rq.rapport) + '" target="_blank" rel="noopener"><b>Rapport de synthèse</b></a>'
+    + (rq.maj_le ? ' <span class="att">du ' + new Date(rq.maj_le).toLocaleDateString('fr-FR') + '</span>' : '')
     + ' · ' + n((rq.erps || []).length) + ' état(s) des risques : '
     + (rq.erps || []).map((x) => '<a href="' + e(x.url) + '" target="_blank" rel="noopener">' + e(x.numero) + '</a>').join(' ')
     + ' <span class="att">— valables jusqu\'au ' + new Date(rq.expire_le).toLocaleDateString('fr-FR') + '</span>';
@@ -1159,7 +1215,10 @@ async function enregistrerRisques(ref, qui, etat) {
 async function lancerRisques(ref, qui) {
   const b = $('#risques-go'), zone = $('#risques-res');
   if (risquesSuivi[ref]) return;
-  if (!confirm('Commander à RISQUES le rapport de risques de tout le portefeuille du dossier ' + ref + ' ?\nUn état des risques sera aussi produit pour chaque bien.')) return;
+  const deja = ($('#risques-go').textContent || '').startsWith('Actualiser');
+  if (!confirm((deja ? 'Un rapport de risques existe déjà pour le dossier ' + ref + '. Le remplacer par un rapport à jour ?'
+                     : 'Commander à RISQUES le rapport de risques de tout le portefeuille du dossier ' + ref + ' ?')
+               + '\nUn état des risques sera aussi produit pour chaque bien.')) return;
   b.disabled = true;
   try {
     const r0 = await fetch('/api/dossier', { method: 'POST', headers: { 'Content-Type': 'application/json' },
