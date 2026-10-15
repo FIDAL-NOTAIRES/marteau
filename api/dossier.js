@@ -127,6 +127,51 @@ async function histo(res, corps) {
 }
 
 // =====================================================================
+// RISQUES — rapport de risques du portefeuille (14/10/2026)
+// Comme pour HISTO, c'est la FAÇADE qui commande et interroge RISQUES (mode
+// différé : numéro de travail, interrogation par l'appelant, RISQUES ne rappelle
+// jamais). Cette action ne fait que :
+//   etape « references » : rendre les parcelles de la société auditée, dans
+//                          l'ordre de MARTEAU (commune, puis référence) ;
+//   etape « enregistrer » : garder l'état du travail avec le dossier (numéro,
+//                          adresse d'interrogation, puis rapport et ERP) et
+//                          journaliser le lancement et le résultat.
+// MARTEAU n'a pas encore de numéros de groupe : chaque parcelle part comme un
+// bien, numérotée dans l'ordre ; RISQUES reprendra tels quels les numéros de
+// groupe le jour où MARTEAU en aura.
+// =====================================================================
+async function risques(res, corps) {
+  const ref = String(corps.dossier ?? '').trim();
+  if (!ref) return res.status(400).json({ erreur: 'dossier requis' });
+  const sql = db();
+  const [d] = await sql`SELECT id, siren_tete, denomination_tete, risques FROM marteau_dossier WHERE reference = ${ref}`;
+  if (!d) return res.status(404).json({ erreur: `dossier ${ref} inconnu` });
+  if ((corps.etape ?? 'references') === 'references') {
+    const lignes = await sql`
+      SELECT code_parcelle, commune_insee FROM marteau_parcelle
+       WHERE dossier_id = ${d.id} AND en_perimetre AND siren_proprietaire = ${d.siren_tete}
+       ORDER BY commune_insee, code_parcelle`;
+    return res.status(200).json({ dossier: ref, societe: d.denomination_tete || d.siren_tete, references: lignes });
+  }
+  const qui = String(corps.qui ?? '').trim() || 'MARTEAU';
+  const etat = corps.etat && typeof corps.etat === 'object' ? corps.etat : {};
+  const avant = d.risques || {};
+  const apres = { ...avant, ...etat, maj_le: new Date().toISOString() };
+  await sql`UPDATE marteau_dossier SET risques = ${JSON.stringify(apres)}::jsonb WHERE id = ${d.id}`;
+  if (etat.statut === 'en_cours' && etat.travail && etat.travail !== avant.travail) {
+    await journaliser(d.id, qui, 'rapport de risques du portefeuille commandé (RISQUES)', { travail: etat.travail, parcelles: etat.parcelles ?? null });
+  }
+  if (etat.statut === 'termine' && avant.statut !== 'termine') {
+    await journaliser(d.id, qui, 'rapport de risques du portefeuille produit (RISQUES)', {
+      travail: apres.travail, rapport: apres.rapport, erps: (apres.erps || []).length, expire_le: apres.expire_le });
+  }
+  if (etat.statut === 'echec' && avant.statut !== 'echec') {
+    await journaliser(d.id, qui, 'rapport de risques du portefeuille en échec (RISQUES)', { travail: apres.travail, cause: etat.cause ?? null });
+  }
+  return res.status(200).json({ dossier: ref, risques: apres });
+}
+
+// =====================================================================
 // Aiguillage
 // =====================================================================
 
@@ -164,9 +209,10 @@ export default async function handler(req, res) {
       case 'marquer':
       case 'saisir':   return await pieces(res, corps, action);
       case 'histo':    return await histo(res, corps);
+      case 'risques':  return await risques(res, corps);
       default:
         return res.status(400).json({
-          erreur: 'action attendue : ouvrir | lister | lire | lever | preparer | marquer | saisir | histo',
+          erreur: 'action attendue : ouvrir | lister | lire | lever | preparer | marquer | saisir | histo | risques',
         });
     }
   } catch (e) {
@@ -345,7 +391,7 @@ async function lire(res, ref) {
 
   const [d] = await sql`
     SELECT id, reference, siren_tete, denomination_tete, associe_en_charge,
-           collaborateur, ouvert_le, clos_le
+           collaborateur, ouvert_le, clos_le, risques
       FROM marteau_dossier WHERE reference = ${ref}
   `;
   if (!d) return res.status(404).json({ erreur: `dossier ${ref} inconnu` });
@@ -450,6 +496,8 @@ async function lire(res, ref) {
       // Deux états, pas plus : provisoire tant qu'une réserve est ouverte.
       etat: ouvertes ? 'provisoire' : 'definitif_possible',
     },
+    // 14/10/2026 : état du rapport de risques du portefeuille (RISQUES), s'il a été commandé
+    risques: d.risques || null,
     // Deux jauges DISTINCTES, jamais un pourcentage unique.
     jauges: {
       pieces:   { recues: pieces.recues, demandees: pieces.demandees, demandables: pieces.demandables },
