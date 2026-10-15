@@ -1216,23 +1216,40 @@ async function lancerRisques(ref, qui) {
   const b = $('#risques-go'), zone = $('#risques-res');
   if (risquesSuivi[ref]) return;
   const deja = ($('#risques-go').textContent || '').startsWith('Actualiser');
-  if (!confirm((deja ? 'Un rapport de risques existe déjà pour le dossier ' + ref + '. Le remplacer par un rapport à jour ?'
-                     : 'Commander à RISQUES le rapport de risques de tout le portefeuille du dossier ' + ref + ' ?')
-               + '\nUn état des risques sera aussi produit pour chaque bien.')) return;
   b.disabled = true;
   try {
     const r0 = await fetch('/api/dossier', { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action: 'risques', etape: 'references', dossier: ref }) });
     const d0 = await r0.json(); if (!r0.ok) throw new Error(d0.erreur || 'références indisponibles');
-    const refs = (d0.references || []).map(refHisto).filter(Boolean)
-      .map((x) => x.insee + '-' + x.prefixe + '-' + String(x.section).padStart(2, '0') + '-' + String(x.numero).padStart(4, '0'));
-    if (!refs.length) throw new Error('aucune parcelle de la société auditée dans le périmètre');
-    // pas encore de numéros de groupe dans MARTEAU : une parcelle par bien, dans l'ordre de MARTEAU
-    const groupes = refs.map((r, i) => ({ numero: String(i + 1), parcelles: [r] }));
+    const norme = (x) => x.insee + '-' + x.prefixe + '-' + String(x.section).padStart(2, '0') + '-' + String(x.numero).padStart(4, '0');
+    const lignes = (d0.references || []).map((l) => ({ l, r: refHisto(l) })).filter((x) => x.r);
+    if (!lignes.length) throw new Error('aucune parcelle de la société auditée dans le périmètre');
+    // 15/10/2026 — GROUPES : repris de FUSION quand un dossier FUSION existe (numéros sur
+    // quatre chiffres, ordre de FUSION) ; une parcelle absente de FUSION part seule, sous un
+    // numéro « P1, P2… » qui ne peut pas se confondre avec un groupe ; sans dossier FUSION,
+    // une parcelle par bien (le calcul des unités foncières dans MARTEAU est le lot 2).
+    const fz = d0.fusion || {};
+    const parGroupe = new Map(); const seules = [];
+    for (const { l, r } of lignes) {
+      if (l.groupe != null) { const k = Number(l.groupe); if (!parGroupe.has(k)) parGroupe.set(k, []); parGroupe.get(k).push(norme(r)); }
+      else seules.push(norme(r));
+    }
+    const groupes = [...parGroupe.keys()].sort((a, z) => a - z).map((k) => ({ numero: String(k).padStart(4, '0'), parcelles: parGroupe.get(k) }))
+      .concat(seules.map((r, i) => ({ numero: (parGroupe.size ? 'P' : '') + (i + 1), parcelles: [r] })));
+    const refs = lignes.map((x) => norme(x.r));
+    const origine = fz.trouve && parGroupe.size
+      ? 'Groupes repris de FUSION' + (fz.definitive ? ' (numérotation définitive du ' + new Date(fz.definitive).toLocaleDateString('fr-FR') + ')' : ' (numérotation encore provisoire)')
+        + ' : ' + parGroupe.size + ' groupe(s)' + (seules.length ? ', plus ' + seules.length + ' parcelle(s) absente(s) de FUSION, traitée(s) seule(s)' : '') + '.'
+      : 'Pas de dossier FUSION pour cette société : chaque parcelle sera traitée comme un bien distinct.';
+    if (!confirm((deja ? 'Un rapport de risques existe déjà pour le dossier ' + ref + '. Le remplacer par un rapport à jour ?'
+                       : 'Commander à RISQUES le rapport de risques de tout le portefeuille du dossier ' + ref + ' ?')
+                 + '\n\n' + refs.length + ' parcelle(s). ' + origine
+                 + '\nUn état des risques sera aussi produit pour chaque bien.')) { b.disabled = false; return; }
     const r1 = await fetch(RISQUES_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ societe: d0.societe, appelant: 'MARTEAU', dossier: ref, groupes }) });
     const d1 = await r1.json(); if (!r1.ok) throw new Error(d1.cause || ('RISQUES ' + r1.status));
-    const etat = { statut: 'en_cours', travail: d1.travail, interroger: d1.interroger, parcelles: refs.length, lance_le: new Date().toISOString(), societe: d0.societe };
+    const etat = { statut: 'en_cours', travail: d1.travail, interroger: d1.interroger, parcelles: refs.length, biens: groupes.length,
+                   groupes_fusion: parGroupe.size, lance_le: new Date().toISOString(), societe: d0.societe };
     await enregistrerRisques(ref, qui, etat);
     suivreRisques(ref, etat, qui, false);
   } catch (err) {
