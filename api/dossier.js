@@ -151,7 +151,31 @@ async function risques(res, corps) {
       SELECT code_parcelle, commune_insee FROM marteau_parcelle
        WHERE dossier_id = ${d.id} AND en_perimetre AND siren_proprietaire = ${d.siren_tete}
        ORDER BY commune_insee, code_parcelle`;
-    return res.status(200).json({ dossier: ref, societe: d.denomination_tete || d.siren_tete, references: lignes });
+    // 15/10/2026 — GROUPES (arbitrage JFD) : si un dossier FUSION existe pour la même
+    // société, MARTEAU REPREND ses groupes et ses numéros tels quels (une seule vérité ;
+    // le découpage fait dans FUSION sert aux deux outils). Même base Neon : lecture
+    // directe des tables de FUSION, par référence cadastrale à 14 caractères. À défaut
+    // (lot 2), MARTEAU calculera les unités foncières avec le même moteur.
+    let fusion = { trouve: false };
+    try {
+      const [f] = await sql`SELECT id, denomination, etat->>'numerotation_definitive' AS definitive
+                              FROM fusion_dossier WHERE siren = ${d.siren_tete}`;
+      if (f) {
+        const codes = lignes.map((x) => String(x.code_parcelle).replace(/\s+/g, '').toUpperCase());
+        const rangs = await sql`SELECT idu, groupe FROM fusion_parcelle
+                                 WHERE dossier_id = ${f.id} AND groupe IS NOT NULL AND idu = ANY(${codes}::text[])`;
+        const g = new Map(rangs.map((x) => [x.idu, x.groupe]));
+        for (const l of lignes) {
+          const n = g.get(String(l.code_parcelle).replace(/\s+/g, '').toUpperCase());
+          if (n != null) l.groupe = n;
+        }
+        fusion = { trouve: true, definitive: f.definitive || null, groupes: new Set(rangs.map((x) => x.groupe)).size,
+                   rattachees: lignes.filter((l) => l.groupe != null).length, total: lignes.length };
+      }
+    } catch (e) {
+      fusion = { trouve: false, cause: 'tables FUSION illisibles : ' + e.message };
+    }
+    return res.status(200).json({ dossier: ref, societe: d.denomination_tete || d.siren_tete, references: lignes, fusion });
   }
   const qui = String(corps.qui ?? '').trim() || 'MARTEAU';
   const etat = corps.etat && typeof corps.etat === 'object' ? corps.etat : {};
