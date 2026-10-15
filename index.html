@@ -103,21 +103,23 @@
 
 <main>
   <section class="carte" id="ecran-accroche">
-    <h2 style="font-size:18px;margin-bottom:4px">Accroche large</h2>
-    <p class="att" style="margin:0 0 14px">
-      Un seul point d'entree : le nom de la societe, ou son SIREN. MARTEAU interroge REDPAR
-      et ramasse tout ce qui s'y rattache. La liste est ensuite validee commune par commune
-      avant tout depart vers l'exterieur.
-    </p>
+    <!-- 15/10/2026 : titre « Nouveau dossier » (JFD) ; l'indication « accroche large »
+         descend sous le champ de saisie -->
+    <h2 style="font-size:18px;margin-bottom:12px">Nouveau dossier</h2>
     <div class="rang">
       <div>
-        <label for="q">Societe (denomination ou SIREN)</label>
+        <label for="q">Société (dénomination ou SIREN)</label>
         <input type="text" id="q" placeholder="LOGIS METROPOLE — ou 886980440" autocomplete="off">
       </div>
       <div style="flex:0 0 auto">
         <button id="go">Photographier le patrimoine</button>
       </div>
     </div>
+    <p class="att" style="margin:10px 0 0">
+      <b>Accroche large</b> — un seul point d'entrée : le nom de la société, ou son SIREN. MARTEAU
+      interroge REDPAR et ramasse tout ce qui s'y rattache. La liste est ensuite validée commune par
+      commune avant tout départ vers l'extérieur.
+    </p>
     <div id="etat" class="att" style="margin-top:10px"></div>
   </section>
 
