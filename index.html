@@ -119,7 +119,7 @@
         <input type="text" id="q" placeholder="LOGIS METROPOLE — ou 886980440" autocomplete="off">
       </div>
       <div style="flex:0 0 auto">
-        <button id="go">Photographier le patrimoine</button>
+        <button id="go">Lancer l'audit</button>
       </div>
     </div>
     <p class="att" style="margin:10px 0 0">
@@ -169,7 +169,7 @@
        « Précédent » du navigateur ramène à l'écran d'avant. -->
   <div id="resultat" class="cache">
     <div class="barre-ecran">
-      <span class="att">Photographie d'une société — rien n'est écrit tant que le dossier n'est pas enregistré.</span></div>
+      <span class="att">Biens de la société — rien n'est écrit tant que le dossier n'est pas enregistré.</span></div>
     <div class="provisoire">
       <b>Audit version provisoire a la date du <span id="dategen"></span></b> —
       une seule reserve suffit a l'empecher de devenir definitif. Reserve systematique ouverte :
@@ -378,7 +378,7 @@ function afficher(p) {
   $('#titre-soc').textContent = p.societe.denomination || '(denomination inconnue)';
   $('#ident-soc').innerHTML = 'SIREN ' + e(p.societe.siren || '—')
     + ' · millesime FPMU ' + e(p.societe.millesime || '—')
-    + ' · photographie prise le ' + new Date(p.genere_le).toLocaleString('fr-FR');
+    + ' · relevé établi le ' + new Date(p.genere_le).toLocaleString('fr-FR');
 
   let av = '';
   if (p.indisponible && p.indisponible.length) {
@@ -387,7 +387,7 @@ function afficher(p) {
       + '. Les compteurs correspondants ne sont pas des zeros : ils sont inconnus.</div>';
   }
   if (p.tronque) {
-    av += '<div class="alerte"><b>Releve tronque par REDPAR.</b> La photographie est partielle ; '
+    av += '<div class="alerte"><b>Releve tronque par REDPAR.</b> Le relevé des biens est partiel ; '
       + 'annonces ' + n(p.agregats.total_parcelles_annonce) + ' parcelles et '
       + n(p.agregats.total_locaux_annonce) + ' locaux.</div>';
   }
@@ -436,7 +436,7 @@ function afficher(p) {
 }
 
 async function dessiner(p) {
-  if (typeof L === 'undefined') { $('#carte').innerHTML = '<p class="att" style="padding:14px">Leaflet indisponible — carte a retraiter. Le reste de la photographie est intact.</p>'; return; }
+  if (typeof L === 'undefined') { $('#carte').innerHTML = '<p class="att" style="padding:14px">Leaflet indisponible — carte a retraiter. Le reste du relevé est intact.</p>'; return; }
   if (!carte) {
     carte = L.map('carte').setView([46.7, 2.4], 6);
     L.tileLayer('https://data.geopf.fr/wmts?SERVICE=WMTS&VERSION=1.0.0&REQUEST=GetTile'
@@ -584,7 +584,7 @@ function montrerEcran(nom, ref) {
   const rh = $('#retour-haut');
   if (rh) { rh.style.display = nom === 'accueil' ? 'none' : ''; rh.textContent = nom === 'dossier' ? '← Dossiers en cours' : '← Accueil'; }
   // une étape d'historique seulement si l'adresse change vraiment (sinon « Précédent » tournerait en rond)
-  const voulu = nom === 'dossier' ? '#' + ref : nom === 'photo' ? '#photo' : '';
+  const voulu = nom === 'dossier' ? '#' + ref : nom === 'photo' ? '#biens' : '';
   if ((location.hash || '') !== voulu) {
     history.pushState({ ecran: nom, ref: ref || null }, '', voulu || (location.pathname + location.search));
   }
@@ -593,7 +593,7 @@ function montrerEcran(nom, ref) {
 function allerSelonAdresse() {
   const h = decodeURIComponent((location.hash || '').slice(1));
   if (/^\d{4}-\d{4}$/.test(h)) { if (DOSSIER_COURANT !== h) afficherEtat(h); return; }
-  if (h === 'photo' && typeof PHOTO !== 'undefined' && PHOTO) { montrerEcran('photo'); return; }
+  if (h === 'biens' && typeof PHOTO !== 'undefined' && PHOTO) { montrerEcran('photo'); return; }
   montrerEcran('accueil');
 }
 window.addEventListener('popstate', allerSelonAdresse);
@@ -636,7 +636,7 @@ $('#go').addEventListener('click', async () => {
     const d = await r.json();
     if (!r.ok) throw new Error(d.erreur || 'echec');
 
-    $('#etat').textContent = 'Photographie prise en ' + ((Date.now() - t0) / 1000).toFixed(1) + ' s.';
+    $('#etat').textContent = 'Biens relevés en ' + ((Date.now() - t0) / 1000).toFixed(1) + ' s.';
     afficher(d);
     montrerEcran('photo');
   } catch (err) {
@@ -647,7 +647,7 @@ $('#go').addEventListener('click', async () => {
 
 $('#liens').addEventListener('click', async () => {
   if (!PHOTO || !PHOTO.societe.siren) {
-    $('#liens-res').innerHTML = '<div class="alerte">Aucun SIREN resolu — lancez d\'abord une photographie.</div>';
+    $('#liens-res').innerHTML = '<div class="alerte">Aucun SIREN resolu — lancez d\'abord l\'audit.</div>';
     return;
   }
   $('#liens').disabled = true;
@@ -681,7 +681,7 @@ $('#liens').addEventListener('click', async () => {
         + '</b> locaux a son nom.'
         + (a.a_confirmer ? '<br><i>Lien non qualifie — a confirmer sur l\'acte.</i>' : '')
         + '<br><button class="sec photo-liee" data-siren="' + e(a.siren) + '" style="margin-top:8px">'
-        + 'Photographier cette societe</button>'
+        + 'Lancer l\'audit de cette société</button>'
         + ' <a href="' + a.sources[0] + '" target="_blank" rel="noopener" style="margin-left:8px">l\'avis au BODACC</a>'
         + '</div>').join('');
     } else {
@@ -1025,7 +1025,7 @@ $('#ref').addEventListener('keydown', (ev) => { if (ev.key === 'Enter') $('#rouv
 // toujours pouvoir sortir.
 $('#enreg').addEventListener('click', async () => {
   if (!PHOTO || !PHOTO.societe.siren) {
-    $('#enreg-res').innerHTML = '<div class="alerte">Aucun SIREN resolu — lancez d\'abord une photographie.</div>';
+    $('#enreg-res').innerHTML = '<div class="alerte">Aucun SIREN resolu — lancez d\'abord l\'audit.</div>';
     return;
   }
   const associe = $('#assoc').value.trim().toUpperCase();
@@ -1055,7 +1055,7 @@ $('#enreg').addEventListener('click', async () => {
     $('#enreg-res').innerHTML = '<div class="info"><b>Dossier ' + e(d2.dossier) + (d1.repris ? ' repris.' : ' ouvert.')
       + '</b> ' + n(d2.ecrit.parcelles) + ' parcelles et ' + n(d2.ecrit.societes) + ' société(s) écrites.</div>'
       + '<div class="tuiles">'
-      + '<div class="tuile"><div class="n" style="font-size:16px">' + volet(d2.volets.photo) + '</div><div class="l">Photographie</div></div>'
+      + '<div class="tuile"><div class="n" style="font-size:16px">' + volet(d2.volets.photo) + '</div><div class="l">Relevé des biens</div></div>'
       + '<div class="tuile"><div class="n" style="font-size:16px">' + volet(d2.volets.liens) + '</div><div class="l">Chaîne des SIREN</div></div>'
       + '</div>'
       + '<p class="att" style="margin:8px 0 4px">Empreinte de tête de la piste d\'audit — à ancrer hors de la base, elle change à chaque événement :</p>'
