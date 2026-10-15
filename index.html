@@ -97,9 +97,14 @@
 </style>
 </head>
 <body>
-<header>
-  <h1>MARTEAU</h1>
-  <div class="sous">Audit de portefeuille — REDPAR · BODACC · MATRICE · PAINT · URBA · TRENTE · XYLO &nbsp;·&nbsp; <a href="/reunion.html" style="color:var(--cyan)">Note de réunion</a></div>
+<header style="display:flex;align-items:center;gap:16px">
+  <div style="flex:1 1 auto">
+    <h1>MARTEAU</h1>
+    <div class="sous">Audit de portefeuille — REDPAR · BODACC · MATRICE · PAINT · URBA · TRENTE · XYLO &nbsp;·&nbsp; <a href="/reunion.html" style="color:var(--cyan)">Note de réunion</a></div>
+  </div>
+  <!-- 15/10/2026 (JFD) : le retour est dans la barre bleue, en haut à droite, bien visible ;
+       absent de l'accueil, libellé selon l'écran -->
+  <button type="button" id="retour-haut" style="display:none;flex:0 0 auto;background:#fff;color:var(--nuit);border:2px solid #fff;border-radius:8px;padding:9px 18px;font-size:15px;font-weight:600;cursor:pointer">← Accueil</button>
 </header>
 
 <main>
@@ -162,7 +167,7 @@
        Chacun a son bouton de retour ; chaque dossier a son adresse (#2026-0006), le bouton
        « Précédent » du navigateur ramène à l'écran d'avant. -->
   <div id="resultat" class="cache">
-    <div class="barre-ecran"><button class="sec" id="retour-accueil">← Accueil</button>
+    <div class="barre-ecran">
       <span class="att">Photographie d'une société — rien n'est écrit tant que le dossier n'est pas enregistré.</span></div>
     <div class="provisoire">
       <b>Audit version provisoire a la date du <span id="dategen"></span></b> —
@@ -288,7 +293,7 @@
     </section>
   </div>
   <div id="page-dossier" style="display:none">
-    <div class="barre-ecran"><button class="sec" id="retour-dossiers">← Dossiers en cours</button>
+    <div class="barre-ecran">
       <span id="titre-dossier" style="font-family:Georgia,serif;font-size:17px"></span></div>
     <section class="carte">
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px">
@@ -575,6 +580,8 @@ function montrerEcran(nom, ref) {
   for (const id of ['ecran-accroche', 'ecran-reprise']) { const el = $('#' + id); if (el) el.style.display = nom === 'accueil' ? '' : 'none'; }
   const res = $('#resultat'); if (res) { res.style.display = nom === 'photo' ? '' : 'none'; if (nom === 'photo') res.classList.remove('cache'); }
   const pd = $('#page-dossier'); if (pd) pd.style.display = nom === 'dossier' ? '' : 'none';
+  const rh = $('#retour-haut');
+  if (rh) { rh.style.display = nom === 'accueil' ? 'none' : ''; rh.textContent = nom === 'dossier' ? '← Dossiers en cours' : '← Accueil'; }
   // une étape d'historique seulement si l'adresse change vraiment (sinon « Précédent » tournerait en rond)
   const voulu = nom === 'dossier' ? '#' + ref : nom === 'photo' ? '#photo' : '';
   if ((location.hash || '') !== voulu) {
@@ -598,8 +605,11 @@ function plierReprise(plier) {
               chev.title = plier ? 'Déplier' : 'Replier'; chev.setAttribute('aria-expanded', plier ? 'false' : 'true'); }
   if (res) res.textContent = plier ? ' — cliquer pour déplier' : '';
 }
-$('#retour-accueil').addEventListener('click', () => montrerEcran('accueil'));
-$('#retour-dossiers').addEventListener('click', () => { montrerEcran('accueil'); plierReprise(false); chargerListe(); });
+$('#retour-haut').addEventListener('click', () => {
+  const depuisDossier = ECRAN === 'dossier';
+  montrerEcran('accueil');
+  if (depuisDossier) { plierReprise(false); chargerListe(); }
+});
 
 ['#reprise-chevron', '#reprise-titre'].forEach((sel) => {
   const el = $(sel);
