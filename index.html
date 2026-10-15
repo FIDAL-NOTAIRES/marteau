@@ -128,10 +128,17 @@
   <section class="carte" id="ecran-reprise">
     <!-- 15/10/2026 : section REPLIABLE (clic sur le titre) ; elle se replie d'elle-même
          au lancement d'une photographie, pour laisser la place aux résultats -->
-    <h2 id="reprise-titre" style="font-size:18px;margin-bottom:4px;cursor:pointer;user-select:none">
-      <span id="reprise-chevron" style="display:inline-block;width:18px;transition:transform .15s">▾</span>Dossiers en cours
-      <span id="reprise-resume" class="att" style="font-size:13px;font-weight:normal;font-family:inherit"></span></h2>
-    <div id="reprise-corps">
+    <!-- chevron repris de REDPAR (28/09/2026) : bouton carré bordé de 32 px, chevron épais
+         de 24 px bleu nuit, quart de tour à l'ouverture ; titre cliquable ; REPLIÉ par défaut -->
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px">
+      <button type="button" id="reprise-chevron" title="Déplier" aria-expanded="false"
+        style="width:32px;height:32px;flex:0 0 32px;display:flex;align-items:center;justify-content:center;padding:0;border:1px solid #d6d3d1;border-radius:8px;background:#fff;cursor:pointer">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#0F2238" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"
+          style="transition:transform .15s"><path d="m9 18 6-6-6-6"/></svg></button>
+      <h2 id="reprise-titre" style="font-size:18px;margin:0;cursor:pointer;user-select:none">Dossiers en cours</h2>
+      <span id="reprise-resume" class="att" style="font-size:13px"> — cliquer pour déplier</span>
+    </div>
+    <div id="reprise-corps" style="display:none">
     <p class="att" style="margin:0 0 12px">
       Les audits ouverts, les plus récents d'abord. Le bandeau de couleur de chaque ligne est
       la plus grave de ses familles. Cliquez une ligne pour afficher son état.
@@ -549,12 +556,13 @@ function plierReprise(plier) {
   const corps = $('#reprise-corps'), chev = $('#reprise-chevron'), res = $('#reprise-resume');
   if (!corps) return;
   corps.style.display = plier ? 'none' : '';
-  if (chev) chev.style.transform = plier ? 'rotate(-90deg)' : '';
-  if (res) res.textContent = plier ? ' — repliés, cliquez pour les afficher' : '';
+  if (chev) { chev.querySelector('svg').style.transform = plier ? '' : 'rotate(90deg)';
+              chev.title = plier ? 'Déplier' : 'Replier'; chev.setAttribute('aria-expanded', plier ? 'false' : 'true'); }
+  if (res) res.textContent = plier ? ' — cliquer pour déplier' : '';
 }
-document.addEventListener('DOMContentLoaded', () => {
-  const t = $('#reprise-titre');
-  if (t) t.addEventListener('click', () => plierReprise($('#reprise-corps').style.display !== 'none'));
+['#reprise-chevron', '#reprise-titre'].forEach((sel) => {
+  const el = $(sel);
+  if (el) el.addEventListener('click', () => plierReprise($('#reprise-corps').style.display !== 'none'));
 });
 function replierDossierOuvert() {
   plierReprise(true);
