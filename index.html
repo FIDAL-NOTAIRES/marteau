@@ -536,9 +536,24 @@ async function verifierSiren(q) {
   }));
 }
 
+/* 15/10/2026 : une nouvelle photographie REPLIE la fiche du dossier ouvert juste
+   au-dessus (elle occupait tout le haut de la page et les résultats sortaient
+   en dessous, hors de vue) ; une ligne garde le moyen de la rouvrir. */
+function replierDossierOuvert() {
+  const z = $('#etat-res'), ref = ($('#ref').value || '').trim();
+  if (!z || !z.innerHTML.trim() || z.dataset.replie === '1') return;
+  z.dataset.replie = '1';
+  z.innerHTML = '<div class="att" style="padding:6px 0">Fiche du dossier ' + e(ref || '—')
+    + ' repliée pour la nouvelle photographie — <a href="#" id="rouvrir-dossier">la rouvrir</a>.</div>';
+  $('#ref').value = '';
+  const l = $('#rouvrir-dossier');
+  if (l) l.addEventListener('click', (ev) => { ev.preventDefault(); delete z.dataset.replie; $('#ref').value = ref; afficherEtat(ref); });
+}
+
 $('#go').addEventListener('click', async () => {
   const q = $('#q').value.trim();
   if (q.length < 2) { $('#etat').textContent = 'Saisissez au moins deux caracteres.'; return; }
+  replierDossierOuvert();
   $('#go').disabled = true;
   const t0 = Date.now();
   $('#etat').textContent = 'Interrogation de REDPAR — non bati et bati en parallele…';
@@ -556,6 +571,8 @@ $('#go').addEventListener('click', async () => {
 
     $('#etat').textContent = 'Photographie prise en ' + ((Date.now() - t0) / 1000).toFixed(1) + ' s.';
     afficher(d);
+    // la page descend d'elle-même sur les résultats
+    const res = $('#resultat'); if (res && res.scrollIntoView) res.scrollIntoView({ behavior: 'smooth', block: 'start' });
   } catch (err) {
     $('#etat').innerHTML = '<span style="color:#A01040">REDPAR indisponible — portefeuille a retraiter : '
       + e(err.message) + '</span>';
@@ -673,6 +690,7 @@ $('#ouvre').addEventListener('click', () => {
 // Lecture seule. C'est ce qui survit au rechargement : jauges réelles,
 // réserves ouvertes, sociétés du périmètre, queue du journal chaîné.
 async function afficherEtat(ref) {
+  delete $('#etat-res').dataset.replie;
   $('#etat-res').innerHTML = '<div class="att">Lecture du dossier ' + e(ref) + '…</div>';
   const r = await fetch(DOSSIER + '?dossier=' + encodeURIComponent(ref));
   const d = await r.json();
