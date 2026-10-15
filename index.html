@@ -126,7 +126,12 @@
        société avant de pouvoir rouvrir un dossier existant. Préfiguration
        de l'écran d'accueil. -->
   <section class="carte" id="ecran-reprise">
-    <h2 style="font-size:18px;margin-bottom:4px">Dossiers en cours</h2>
+    <!-- 15/10/2026 : section REPLIABLE (clic sur le titre) ; elle se replie d'elle-même
+         au lancement d'une photographie, pour laisser la place aux résultats -->
+    <h2 id="reprise-titre" style="font-size:18px;margin-bottom:4px;cursor:pointer;user-select:none">
+      <span id="reprise-chevron" style="display:inline-block;width:18px;transition:transform .15s">▾</span>Dossiers en cours
+      <span id="reprise-resume" class="att" style="font-size:13px;font-weight:normal;font-family:inherit"></span></h2>
+    <div id="reprise-corps">
     <p class="att" style="margin:0 0 12px">
       Les audits ouverts, les plus récents d'abord. Le bandeau de couleur de chaque ligne est
       la plus grave de ses familles. Cliquez une ligne pour afficher son état.
@@ -141,6 +146,7 @@
       <div style="flex:0 0 auto"><button class="sec" id="voir-clos">Afficher les dossiers clos</button></div>
     </div>
     <div id="etat-res" style="margin-top:12px"></div>
+    </div>
   </section>
 
   <div id="resultat" class="cache">
@@ -539,7 +545,19 @@ async function verifierSiren(q) {
 /* 15/10/2026 : une nouvelle photographie REPLIE la fiche du dossier ouvert juste
    au-dessus (elle occupait tout le haut de la page et les résultats sortaient
    en dessous, hors de vue) ; une ligne garde le moyen de la rouvrir. */
+function plierReprise(plier) {
+  const corps = $('#reprise-corps'), chev = $('#reprise-chevron'), res = $('#reprise-resume');
+  if (!corps) return;
+  corps.style.display = plier ? 'none' : '';
+  if (chev) chev.style.transform = plier ? 'rotate(-90deg)' : '';
+  if (res) res.textContent = plier ? ' — repliés, cliquez pour les afficher' : '';
+}
+document.addEventListener('DOMContentLoaded', () => {
+  const t = $('#reprise-titre');
+  if (t) t.addEventListener('click', () => plierReprise($('#reprise-corps').style.display !== 'none'));
+});
 function replierDossierOuvert() {
+  plierReprise(true);
   const z = $('#etat-res'), ref = ($('#ref').value || '').trim();
   if (!z || !z.innerHTML.trim() || z.dataset.replie === '1') return;
   z.dataset.replie = '1';
@@ -547,7 +565,7 @@ function replierDossierOuvert() {
     + ' repliée pour la nouvelle photographie — <a href="#" id="rouvrir-dossier">la rouvrir</a>.</div>';
   $('#ref').value = '';
   const l = $('#rouvrir-dossier');
-  if (l) l.addEventListener('click', (ev) => { ev.preventDefault(); delete z.dataset.replie; $('#ref').value = ref; afficherEtat(ref); });
+  if (l) l.addEventListener('click', (ev) => { ev.preventDefault(); delete z.dataset.replie; $('#ref').value = ref; plierReprise(false); afficherEtat(ref); });
 }
 
 $('#go').addEventListener('click', async () => {
@@ -690,6 +708,7 @@ $('#ouvre').addEventListener('click', () => {
 // Lecture seule. C'est ce qui survit au rechargement : jauges réelles,
 // réserves ouvertes, sociétés du périmètre, queue du journal chaîné.
 async function afficherEtat(ref) {
+  plierReprise(false);
   delete $('#etat-res').dataset.replie;
   $('#etat-res').innerHTML = '<div class="att">Lecture du dossier ' + e(ref) + '…</div>';
   const r = await fetch(DOSSIER + '?dossier=' + encodeURIComponent(ref));
