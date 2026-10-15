@@ -299,6 +299,7 @@
 <!-- 11/10/2026 — jeton Google de la connexion du matin, pour appeler HISTO (le client GSI d'abord : piège acces.js du 03/10) -->
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <script src="https://connexion-omega.vercel.app/acces.js" defer></script>
+<script src="https://attente.vercel.app/attente.js?v=5.0" defer></script>
 <script>
 const REDPAR = 'https://redpar-backend.vercel.app';
 const OUTIL = (p) => `https://${p}-jean-francoisdumetz-7391s-projects.vercel.app/`;
@@ -702,6 +703,11 @@ async function afficherEtat(ref) {
     + '<button class="sec" id="relancer">Relancer l\'analyse</button></div>'
     + '<div style="flex:1 1 auto" class="att">Recalcule les dix familles depuis la base, sans réinterroger REDPAR ni le BODACC.</div></div>';
 
+  // 14/10/2026 — rapport de RISQUES du portefeuille (mode différé)
+  h += '<div class="rang" style="margin:-4px 0 12px"><div style="flex:0 0 auto">'
+    + '<button class="sec" id="risques-go">Rapport de risques du portefeuille</button></div>'
+    + '<div style="flex:1 1 auto" id="risques-res">' + risquesHTML(d.risques) + '</div></div>';
+
   h += '<h3 style="font-size:15px;margin:12px 0 6px">Réserves — ' + n(jr.total - jr.levees) + ' ouverte(s)</h3>'
     + '<table><thead><tr><th></th><th>Réserve</th><th>Ouverte le</th><th>Levée</th></tr></thead><tbody>'
     + d.reserves.map((x) => '<tr' + (x.levee_le ? ' class="off"' : '') + '>'
@@ -783,6 +789,10 @@ async function afficherEtat(ref) {
   const cochees = (nature) => [].slice.call(document.querySelectorAll('#registre .ckp:checked'))
     .filter((k) => !nature || k.dataset.nature === nature).map((k) => Number(k.dataset.id));
   const quiDem = () => ($('#collab').value || $('#assoc').value || 'JFD').trim().toUpperCase();
+
+  $('#risques-go').addEventListener('click', () => lancerRisques(ref, quiDem()));
+  // un travail commandé et non fini (onglet refermé, page rechargée) : on reprend le suivi
+  if (d.risques && d.risques.statut === 'en_cours' && d.risques.interroger && !risquesSuivi[ref]) suivreRisques(ref, d.risques, quiDem(), true);
 
   $('#relancer').addEventListener('click', async () => {
     const b = $('#relancer');
@@ -1031,6 +1041,92 @@ async function lancerHisto(ref, qui, montrer = () => {}) {
       + (besoinsTxt ? ` ; ${besoinsTxt}.` : '.'));
     return d2;
   } catch (err) { montrer('Filiation cadastrale : ' + err.message + ' — analyse sans HISTO.'); return null; }
+}
+
+/* ---------- RISQUES — rapport de risques du portefeuille (14/10/2026) ----------
+   Arbitrages des 14-16/09/2026 : MARTEAU envoie la liste des parcelles, reçoit un
+   numéro de travail, puis INTERROGE l'adresse du travail jusqu'à la réponse
+   (RISQUES ne rappelle jamais). Pendant l'attente, l'écran ATTENTE tient
+   l'affichage ; cadence d'interrogation de départ, à rallonger après les premiers
+   essais : 5 s la première minute, 15 s ensuite, 30 s au-delà de trois minutes.
+   L'état est gardé avec le dossier : un onglet refermé reprend le suivi. */
+const RISQUES_URL = 'https://risques.vercel.app/api/portefeuille';
+const risquesSuivi = {};
+function risquesHTML(rq) {
+  if (!rq) return '<span class="att">Un rapport de synthèse des risques pour tout le portefeuille, plus un état des risques par bien.</span>';
+  if (rq.statut === 'en_cours') return '<span class="att">Travail en cours chez RISQUES' + (rq.phase ? ' — ' + e(rq.message || rq.phase) : '') + (rq.total ? ' (' + n(rq.fait || 0) + ' / ' + n(rq.total) + ')' : '') + '…</span>';
+  if (rq.statut === 'echec') return '<span class="alerte" style="display:inline-block;padding:4px 8px">Échec : ' + e(rq.cause || 'inconnu') + ' — relancer.</span>';
+  if (rq.statut === 'expire' || (rq.expire_le && new Date(rq.expire_le) < new Date())) return '<span class="att">Le rapport du ' + (rq.maj_le ? new Date(rq.maj_le).toLocaleDateString('fr-FR') : '—') + ' a expiré (trente jours) : le commander à nouveau.</span>';
+  if (rq.statut === 'termine') return '<a href="' + e(rq.rapport) + '" target="_blank" rel="noopener"><b>Rapport de synthèse</b></a>'
+    + ' · ' + n((rq.erps || []).length) + ' état(s) des risques : '
+    + (rq.erps || []).map((x) => '<a href="' + e(x.url) + '" target="_blank" rel="noopener">' + e(x.numero) + '</a>').join(' ')
+    + ' <span class="att">— valables jusqu\'au ' + new Date(rq.expire_le).toLocaleDateString('fr-FR') + '</span>';
+  return '';
+}
+async function enregistrerRisques(ref, qui, etat) {
+  try {
+    await fetch('/api/dossier', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'risques', etape: 'enregistrer', dossier: ref, qui, etat }) });
+  } catch (e) { /* le suivi continue, l'état se réécrira au coup suivant */ }
+}
+async function lancerRisques(ref, qui) {
+  const b = $('#risques-go'), zone = $('#risques-res');
+  if (risquesSuivi[ref]) return;
+  if (!confirm('Commander à RISQUES le rapport de risques de tout le portefeuille du dossier ' + ref + ' ?\nUn état des risques sera aussi produit pour chaque bien.')) return;
+  b.disabled = true;
+  try {
+    const r0 = await fetch('/api/dossier', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'risques', etape: 'references', dossier: ref }) });
+    const d0 = await r0.json(); if (!r0.ok) throw new Error(d0.erreur || 'références indisponibles');
+    const refs = (d0.references || []).map(refHisto).filter(Boolean)
+      .map((x) => x.insee + '-' + x.prefixe + '-' + String(x.section).padStart(2, '0') + '-' + String(x.numero).padStart(4, '0'));
+    if (!refs.length) throw new Error('aucune parcelle de la société auditée dans le périmètre');
+    // pas encore de numéros de groupe dans MARTEAU : une parcelle par bien, dans l'ordre de MARTEAU
+    const groupes = refs.map((r, i) => ({ numero: String(i + 1), parcelles: [r] }));
+    const r1 = await fetch(RISQUES_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ societe: d0.societe, appelant: 'MARTEAU', dossier: ref, groupes }) });
+    const d1 = await r1.json(); if (!r1.ok) throw new Error(d1.cause || ('RISQUES ' + r1.status));
+    const etat = { statut: 'en_cours', travail: d1.travail, interroger: d1.interroger, parcelles: refs.length, lance_le: new Date().toISOString(), societe: d0.societe };
+    await enregistrerRisques(ref, qui, etat);
+    suivreRisques(ref, etat, qui, false);
+  } catch (err) {
+    zone.innerHTML = '<span class="alerte" style="display:inline-block;padding:4px 8px">' + e(err.message) + '</span>';
+    b.disabled = false;
+  }
+}
+async function suivreRisques(ref, etat, qui, reprise) {
+  risquesSuivi[ref] = true;
+  const b = $('#risques-go'); if (b) b.disabled = true;
+  const t0 = Date.now(), poids = { moisson: [0, 55], regroupement: [55, 58], rendu: [58, 95], assemblage: [95, 99] };
+  const A = window.ATTENTE;
+  if (A) A.demarrer({ titre: 'Rapport de risques du portefeuille', sousTitre: (etat.societe || '') + ' — dossier ' + ref, source: 'RISQUES' });
+  const cadence = () => { const s = (Date.now() - t0) / 1000; return s < 60 ? 5000 : s < 180 ? 15000 : 30000; };
+  try {
+    for (;;) {
+      const r = await fetch(etat.interroger);
+      const j = await r.json();
+      if (j.statut === 'termine') {
+        await enregistrerRisques(ref, qui, { statut: 'termine', rapport: j.rapport, erps: j.erps, expire_le: j.expire_le });
+        if (A) A.terminer();
+        break;
+      }
+      if (j.statut === 'echec' || j.statut === 'expire' || r.status === 404) {
+        await enregistrerRisques(ref, qui, { statut: 'echec', cause: j.cause || j.statut });
+        if (A) A.echec(j.cause || 'travail interrompu'); else alert('RISQUES : ' + (j.cause || 'échec'));
+        break;
+      }
+      const [a, z] = poids[j.phase] || [0, 99];
+      const pct = Math.round(a + (z - a) * (j.total ? (j.fait || 0) / j.total : 0));
+      if (A) A.progression(pct, (j.message || j.phase) + (j.total ? ' — ' + (j.fait || 0) + ' sur ' + j.total : ''));
+      const zone = $('#risques-res'); if (zone) zone.innerHTML = risquesHTML({ ...etat, ...j });
+      await new Promise((ok) => setTimeout(ok, cadence()));
+    }
+  } catch (err) {
+    if (A) A.echec('suivi interrompu (' + err.message + ') — rouvrir le dossier pour le reprendre');
+  } finally {
+    delete risquesSuivi[ref];
+    if ($('#ref') && $('#ref').value === ref) await afficherEtat(ref);
+  }
 }
 
 $('#q').addEventListener('keydown', (ev) => { if (ev.key === 'Enter') $('#go').click(); });
