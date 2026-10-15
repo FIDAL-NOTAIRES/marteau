@@ -93,6 +93,7 @@
     font-variant-numeric:tabular-nums;text-align:right;min-width:92px}
   .ligne-dossier .chiffre b{color:var(--nuit);font-weight:600}
   footer{color:var(--gris);font-size:11px;text-align:center;padding:20px}
+.barre-ecran{display:flex;align-items:center;gap:14px;margin:0 0 14px}
 </style>
 </head>
 <body>
@@ -154,11 +155,15 @@
       <div style="flex:0 0 auto"><button class="sec" id="rouvrir">Afficher l'état</button></div>
       <div style="flex:0 0 auto"><button class="sec" id="voir-clos">Afficher les dossiers clos</button></div>
     </div>
-    <div id="etat-res" style="margin-top:12px"></div>
     </div>
   </section>
 
+  <!-- 15/10/2026 — TROIS ÉCRANS (JFD) : accueil, photographie d'une société, page du dossier.
+       Chacun a son bouton de retour ; chaque dossier a son adresse (#2026-0006), le bouton
+       « Précédent » du navigateur ramène à l'écran d'avant. -->
   <div id="resultat" class="cache">
+    <div class="barre-ecran"><button class="sec" id="retour-accueil">← Accueil</button>
+      <span class="att">Photographie d'une société — rien n'est écrit tant que le dossier n'est pas enregistré.</span></div>
     <div class="provisoire">
       <b>Audit version provisoire a la date du <span id="dategen"></span></b> —
       une seule reserve suffit a l'empecher de devenir definitif. Reserve systematique ouverte :
@@ -171,20 +176,7 @@
       <h2 style="font-size:18px" id="titre-soc"></h2>
       <div class="att" id="ident-soc" style="margin-bottom:14px"></div>
       <div class="tuiles" id="tuiles"></div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px">
-        <div class="jauge">
-          <div class="t"><span>Jauge pieces — recues / demandees</span><span id="j1t">0 %</span></div>
-          <div class="b"><div class="f" id="j1" style="width:0%"></div></div>
-        </div>
-        <div class="jauge res">
-          <div class="t"><span>Jauge reserves — levees / ouvertes</span><span id="j2t">0 %</span></div>
-          <div class="b"><div class="f" id="j2" style="width:0%"></div></div>
-        </div>
-      </div>
-      <p class="att" style="margin:2px 0 0">
-        Deux jauges distinctes, jamais un pourcentage unique : recevoir toutes les pieces ne leve
-        pas toutes les reserves — une piece recue peut confirmer le probleme.
-      </p>
+
     </section>
 
     <section class="carte" id="ecran-dossier">
@@ -228,7 +220,7 @@
       </div>
       <div id="enreg-res"></div>
       <p class="att" style="margin:10px 0 0">
-        L'état du dossier s'affiche dans « Dossiers en cours », en haut de page.
+        Une fois enregistré, le dossier s'ouvre sur sa page dédiée.
       </p>
     </section>
 
@@ -242,15 +234,7 @@
       </div>
     </section>
 
-    <section class="carte">
-      <h2 style="font-size:18px;margin-bottom:10px">Les dix familles de risque</h2>
-      <div id="familles" class="att">Les familles s'affichent une fois le dossier enregistré et analysé.</div>
-      <p class="att" style="margin:10px 0 0">
-        Canard : tout concordant. Jaune : pièce ou information encore à obtenir. Orange : procédure,
-        formalité ou vérification en cours. Carmin : discordance. La couleur d'une famille est la plus
-        grave de ses voyants ; seul le carmin remonte au sommaire.
-      </p>
-    </section>
+    
 
     <section class="carte">
       <h2 style="font-size:18px;margin-bottom:4px">Dénominations successives et sociétés liées</h2>
@@ -302,6 +286,36 @@
       </p>
       <div id="mat-res"></div>
     </section>
+  </div>
+  <div id="page-dossier" style="display:none">
+    <div class="barre-ecran"><button class="sec" id="retour-dossiers">← Dossiers en cours</button>
+      <span id="titre-dossier" style="font-family:Georgia,serif;font-size:17px"></span></div>
+    <section class="carte">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px">
+          <div class="jauge">
+            <div class="t"><span>Jauge pièces — reçues / demandées</span><span id="j1t">0 %</span></div>
+            <div class="b"><div class="f" id="j1" style="width:0%"></div></div>
+          </div>
+          <div class="jauge res">
+            <div class="t"><span>Jauge réserves — levées / ouvertes</span><span id="j2t">0 %</span></div>
+            <div class="b"><div class="f" id="j2" style="width:0%"></div></div>
+          </div>
+        </div>
+        <p class="att" style="margin:2px 0 0">
+          Deux jauges distinctes, jamais un pourcentage unique : recevoir toutes les pièces ne lève
+          pas toutes les réserves — une pièce reçue peut confirmer le problème.
+        </p>
+    </section>
+    <section class="carte">
+      <h2 style="font-size:18px;margin-bottom:10px">Les dix familles de risque</h2>
+      <div id="familles" class="att">Les familles s'affichent une fois le dossier enregistré et analysé.</div>
+      <p class="att" style="margin:10px 0 0">
+        Canard : tout concordant. Jaune : pièce ou information encore à obtenir. Orange : procédure,
+        formalité ou vérification en cours. Carmin : discordance. La couleur d'une famille est la plus
+        grave de ses voyants ; seul le carmin remonte au sommaire.
+      </p>
+    </section>
+    <div id="etat-res"></div>
   </div>
 </main>
 
@@ -385,8 +399,8 @@ function afficher(p) {
     ['Contenance', m2(a.contenance_m2)],
   ].map((x) => '<div class="tuile"><div class="n">' + x[1] + '</div><div class="l">' + x[0] + '</div></div>').join('');
 
-  $('#j1').style.width = '0%'; $('#j1t').textContent = '0 / 0 recues';
-  $('#j2').style.width = '0%'; $('#j2t').textContent = '0 / 1 levee';
+  $('#j1').style.width = '0%'; $('#j1t').textContent = '0 / 0 reçues';
+  $('#j2').style.width = '0%'; $('#j2t').textContent = '0 / 1 levée';
 
 
   const tb = $('#tbl tbody');
@@ -554,6 +568,28 @@ async function verifierSiren(q) {
 /* 15/10/2026 : une nouvelle photographie REPLIE la fiche du dossier ouvert juste
    au-dessus (elle occupait tout le haut de la page et les résultats sortaient
    en dessous, hors de vue) ; une ligne garde le moyen de la rouvrir. */
+// ---- navigation entre les trois écrans (15/10/2026) ----
+let ECRAN = 'accueil', DOSSIER_COURANT = null;
+function montrerEcran(nom, ref) {
+  ECRAN = nom; DOSSIER_COURANT = nom === 'dossier' ? ref : null;
+  for (const id of ['ecran-accroche', 'ecran-reprise']) { const el = $('#' + id); if (el) el.style.display = nom === 'accueil' ? '' : 'none'; }
+  const res = $('#resultat'); if (res) { res.style.display = nom === 'photo' ? '' : 'none'; if (nom === 'photo') res.classList.remove('cache'); }
+  const pd = $('#page-dossier'); if (pd) pd.style.display = nom === 'dossier' ? '' : 'none';
+  // une étape d'historique seulement si l'adresse change vraiment (sinon « Précédent » tournerait en rond)
+  const voulu = nom === 'dossier' ? '#' + ref : nom === 'photo' ? '#photo' : '';
+  if ((location.hash || '') !== voulu) {
+    history.pushState({ ecran: nom, ref: ref || null }, '', voulu || (location.pathname + location.search));
+  }
+  window.scrollTo(0, 0);
+}
+function allerSelonAdresse() {
+  const h = decodeURIComponent((location.hash || '').slice(1));
+  if (/^\d{4}-\d{4}$/.test(h)) { if (DOSSIER_COURANT !== h) afficherEtat(h); return; }
+  if (h === 'photo' && typeof PHOTO !== 'undefined' && PHOTO) { montrerEcran('photo'); return; }
+  montrerEcran('accueil');
+}
+window.addEventListener('popstate', allerSelonAdresse);
+
 function plierReprise(plier) {
   const corps = $('#reprise-corps'), chev = $('#reprise-chevron'), res = $('#reprise-resume');
   if (!corps) return;
@@ -562,26 +598,18 @@ function plierReprise(plier) {
               chev.title = plier ? 'Déplier' : 'Replier'; chev.setAttribute('aria-expanded', plier ? 'false' : 'true'); }
   if (res) res.textContent = plier ? ' — cliquer pour déplier' : '';
 }
+$('#retour-accueil').addEventListener('click', () => montrerEcran('accueil'));
+$('#retour-dossiers').addEventListener('click', () => { montrerEcran('accueil'); plierReprise(false); chargerListe(); });
+
 ['#reprise-chevron', '#reprise-titre'].forEach((sel) => {
   const el = $(sel);
   if (el) el.addEventListener('click', () => plierReprise($('#reprise-corps').style.display !== 'none'));
 });
-function replierDossierOuvert() {
-  plierReprise(true);
-  const z = $('#etat-res'), ref = ($('#ref').value || '').trim();
-  if (!z || !z.innerHTML.trim() || z.dataset.replie === '1') return;
-  z.dataset.replie = '1';
-  z.innerHTML = '<div class="att" style="padding:6px 0">Fiche du dossier ' + e(ref || '—')
-    + ' repliée pour la nouvelle photographie — <a href="#" id="rouvrir-dossier">la rouvrir</a>.</div>';
-  $('#ref').value = '';
-  const l = $('#rouvrir-dossier');
-  if (l) l.addEventListener('click', (ev) => { ev.preventDefault(); delete z.dataset.replie; $('#ref').value = ref; plierReprise(false); afficherEtat(ref); });
-}
+// (15/10/2026 : le repli de la fiche est devenu inutile, chaque dossier a sa page)
 
 $('#go').addEventListener('click', async () => {
   const q = $('#q').value.trim();
   if (q.length < 2) { $('#etat').textContent = 'Saisissez au moins deux caracteres.'; return; }
-  replierDossierOuvert();
   $('#go').disabled = true;
   const t0 = Date.now();
   $('#etat').textContent = 'Interrogation de REDPAR — non bati et bati en parallele…';
@@ -599,8 +627,7 @@ $('#go').addEventListener('click', async () => {
 
     $('#etat').textContent = 'Photographie prise en ' + ((Date.now() - t0) / 1000).toFixed(1) + ' s.';
     afficher(d);
-    // la page descend d'elle-même sur les résultats
-    const res = $('#resultat'); if (res && res.scrollIntoView) res.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    montrerEcran('photo');
   } catch (err) {
     $('#etat').innerHTML = '<span style="color:#A01040">REDPAR indisponible — portefeuille a retraiter : '
       + e(err.message) + '</span>';
@@ -718,19 +745,20 @@ $('#ouvre').addEventListener('click', () => {
 // Lecture seule. C'est ce qui survit au rechargement : jauges réelles,
 // réserves ouvertes, sociétés du périmètre, queue du journal chaîné.
 async function afficherEtat(ref) {
-  plierReprise(false);
-  delete $('#etat-res').dataset.replie;
+  montrerEcran('dossier', ref);
+  $('#titre-dossier').textContent = 'Dossier ' + ref;
   $('#etat-res').innerHTML = '<div class="att">Lecture du dossier ' + e(ref) + '…</div>';
   const r = await fetch(DOSSIER + '?dossier=' + encodeURIComponent(ref));
   const d = await r.json();
   if (!r.ok) { $('#etat-res').innerHTML = '<div class="alerte">' + e(d.erreur) + '</div>'; return; }
+  $('#titre-dossier').textContent = 'Dossier ' + d.dossier.reference + ' — ' + (d.dossier.denomination || d.dossier.siren);
 
   // Les jauges du haut de page prennent les valeurs réelles.
   const jp = d.jauges.pieces, jr = d.jauges.reserves;
   $('#j1').style.width = (jp.demandees ? 100 * jp.recues / jp.demandees : 0) + '%';
-  $('#j1t').textContent = n(jp.recues) + ' / ' + n(jp.demandees) + ' recues';
+  $('#j1t').textContent = n(jp.recues) + ' / ' + n(jp.demandees) + ' reçues';
   $('#j2').style.width = (jr.total ? 100 * jr.levees / jr.total : 0) + '%';
-  $('#j2t').textContent = n(jr.levees) + ' / ' + n(jr.total) + ' levee(s)';
+  $('#j2t').textContent = n(jr.levees) + ' / ' + n(jr.total) + ' levée(s)';
 
   const confiance = (s) => s.niveau_confiance === 'structuree'
     ? '<span class="past p-canard"></span>fait'
@@ -969,6 +997,7 @@ $('#voir-clos').addEventListener('click', () => {
   chargerListe();
 });
 chargerListe();
+allerSelonAdresse();   // 15/10/2026 : un lien #2026-0006 ouvre directement le dossier
 
 $('#rouvrir').addEventListener('click', () => {
   const ref = $('#ref').value.trim();
@@ -1172,7 +1201,7 @@ async function suivreRisques(ref, etat, qui, reprise) {
     if (A) A.echec('suivi interrompu (' + err.message + ') — rouvrir le dossier pour le reprendre');
   } finally {
     delete risquesSuivi[ref];
-    if ($('#ref') && $('#ref').value === ref) await afficherEtat(ref);
+    if (ECRAN === 'dossier' && DOSSIER_COURANT === ref) await afficherEtat(ref);
   }
 }
 
