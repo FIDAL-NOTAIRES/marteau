@@ -348,7 +348,266 @@
 <script src="https://attente.vercel.app/attente.js?v=5.0" defer></script>
 <!-- 07/11/2026 : rapport d'audit Word, fabriqué dans le navigateur (docx 8, comme PLUME) -->
 <script src="https://cdn.jsdelivr.net/npm/docx@8.5.0/build/index.umd.js" defer></script>
-<script src="/rapport.js?v=1.0" defer></script>
+<script>
+/* rapport d'audit — intégré à la page le 07/11/2026 (un seul fichier à téléverser) */
+/* ==========================================================================
+   MARTEAU — RAPPORT D'AUDIT (Word), première version — 07/11/2026
+   --------------------------------------------------------------------------
+   Pourquoi dans le navigateur : tout ce que le rapport dit est DÉJÀ rendu
+   par GET /api/dossier?dossier=<réf> (familles, voyants rédigés, sociétés,
+   réserves, registre des pièces, empreinte de tête). Aucune fonction serveur
+   de plus (plafond Hobby à douze), aucun appel payant, résultat immédiat.
+
+   Principes repris des arbitrages :
+   - typographie Segoe UI, titres en gras, bleu nuit (règle du 13/10/2026) ;
+   - grille canard / jaune / orange / carmin ; seul le CARMIN remonte en
+     synthèse comme « point de discordance » (légende de la façade) ;
+   - deux états seulement : PROVISOIRE tant qu'une réserve est ouverte ;
+   - l'EMPREINTE DE TÊTE du journal chaîné est ancrée dans le rapport, hors
+     de la base : c'est elle qui prouve, plus tard, ce qui a été vu ce jour ;
+   - organigramme : toutes les sociétés, y compris cessées et absorbées
+     (arbitrage du 10/09), sans pourcentage de détention.
+   Les plans par famille viendront dans une version suivante.
+   ========================================================================== */
+(function (racine) {
+  'use strict';
+
+  const COUL = {
+    nuit: '0F2238', canard: '33838B', jaune: 'FFE764', orange: 'FF982D', carmin: 'A01040',
+    gris: '8A94A0', fond: 'F4F6F8', bord: 'DDE3E9', blanc: 'FFFFFF',
+  };
+  const LIBELLE_COUL = {
+    canard: 'Concordant', jaune: 'À obtenir', orange: 'En cours', carmin: 'Discordance',
+  };
+  const STATUT_PIECE = {
+    demandable: 'À demander', a_saisir: 'À lever', saisie: 'Levée', demandee: 'Demandée',
+    relancee: 'Relancée', recue: 'Reçue', recu_a_analyser: 'Reçue, à analyser', analyse: 'Analysée',
+  };
+  const DESTINATAIRE = {
+    client: 'Client', mairie: 'Mairie', expert_comptable: 'Expert-comptable', syndic: 'Syndic',
+    publicite_fonciere: 'Publicité foncière', etude: 'Étude', cadastre: 'Service du cadastre',
+  };
+  const POLICE = 'Segoe UI';
+  const LARGEUR = 9638; // A4, marges de 2 cm : 11906 - 2 × 1134
+
+  const dateFr = (x) => (x ? new Date(x).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' }) : '—');
+  const nombre = (x) => Number(x || 0).toLocaleString('fr-FR');
+
+  function construireRapport(docx, d, options = {}) {
+    const {
+      Document, Paragraph, TextRun, Table, TableRow, TableCell, WidthType, AlignmentType,
+      BorderStyle, ShadingType, HeadingLevel, Footer, Header, PageNumber, PageBreak,
+    } = docx;
+    const maintenant = options.maintenant ? new Date(options.maintenant) : new Date();
+
+    const doss = d.dossier || {};
+    const familles = d.familles || [];
+    const reserves = d.reserves || [];
+    const ouvertes = reserves.filter((r) => !r.levee_le);
+    const provisoire = doss.etat === 'provisoire' || ouvertes.length > 0;
+
+    // ---------- petites briques
+    const t = (texte, o = {}) => new TextRun({ text: String(texte ?? ''), font: POLICE, size: o.size || 20, bold: o.bold, italics: o.italics, color: o.color || '1A1A1A' });
+    const p = (enfants, o = {}) => new Paragraph({
+      children: Array.isArray(enfants) ? enfants : [t(enfants, o)],
+      alignment: o.align, spacing: { before: o.before ?? 0, after: o.after ?? 120, line: 276 },
+      keepNext: o.keepNext, indent: o.indent, border: o.border,
+    });
+    const titre = (texte, niveau = 1) => new Paragraph({
+      heading: niveau === 1 ? HeadingLevel.HEADING_1 : HeadingLevel.HEADING_2,
+      children: [t(texte, { bold: true, size: niveau === 1 ? 28 : 23, color: COUL.nuit })],
+      spacing: { before: niveau === 1 ? 360 : 240, after: 120 }, keepNext: true,
+      border: niveau === 1 ? { bottom: { style: BorderStyle.SINGLE, size: 6, color: COUL.canard, space: 4 } } : undefined,
+    });
+    const bord = { style: BorderStyle.SINGLE, size: 4, color: COUL.bord };
+    const bords = { top: bord, bottom: bord, left: bord, right: bord };
+    const cellule = (contenu, largeur, o = {}) => new TableCell({
+      width: { size: largeur, type: WidthType.DXA },
+      borders: bords,
+      shading: o.fond ? { type: ShadingType.CLEAR, color: 'auto', fill: o.fond } : undefined,
+      margins: { top: 60, bottom: 60, left: 100, right: 100 },
+      children: (Array.isArray(contenu) ? contenu : [contenu]).map((c) => (c instanceof Paragraph ? c : p([t(c, o)], { after: 0 }))),
+    });
+    const tableau = (largeurs, lignes, entete) => new Table({
+      width: { size: largeurs.reduce((a, b) => a + b, 0), type: WidthType.DXA },
+      columnWidths: largeurs,
+      rows: [
+        ...(entete ? [new TableRow({ tableHeader: true, children: entete.map((x, i) => cellule(x, largeurs[i], { fond: COUL.nuit, color: COUL.blanc, bold: true, size: 18 })) })] : []),
+        ...lignes.map((l) => new TableRow({ cantSplit: true, children: l.map((x, i) => (x instanceof TableCell ? x : cellule(x, largeurs[i], { size: 18 }))) })),
+      ],
+    });
+    const caseCouleur = (c, largeur) => {
+      if (!c) return cellule('Non analysée', largeur, { size: 18, color: COUL.gris, italics: true });
+      const fonce = c === 'canard' || c === 'carmin';
+      return cellule(LIBELLE_COUL[c] || c, largeur, { fond: COUL[c], color: fonce ? COUL.blanc : '1A1A1A', bold: true, size: 18 });
+    };
+    const pastille = (c) => t('■ ', { color: COUL[c] || COUL.gris, size: 22 });
+
+    const corps = [];
+
+    // ---------- 1. Page de garde
+    corps.push(
+      p([t('FIDAL NOTAIRES', { bold: true, size: 22, color: COUL.canard })], { after: 2400 }),
+      p([t('Rapport d\u2019audit du patrimoine immobilier', { bold: true, size: 44, color: COUL.nuit })], { after: 240 }),
+      p([t(doss.denomination || '—', { bold: true, size: 32 })], { after: 80 }),
+      p([t('SIREN ' + (doss.siren || '—'), { size: 22, color: COUL.gris })], { after: 600 }),
+      p([t('Dossier ', { size: 20 }), t(doss.reference || '—', { bold: true, size: 20 })], { after: 40 }),
+      p([t('Associé en charge : ' + (doss.associe || '—') + (doss.collaborateur ? ' · collaborateur : ' + doss.collaborateur : ''), { size: 20 })], { after: 40 }),
+      p([t('Dossier ouvert le ' + dateFr(doss.ouvert_le) + ' · rapport établi le ' + dateFr(maintenant), { size: 20 })], { after: 600 }),
+      provisoire
+        ? p([t('RAPPORT PROVISOIRE', { bold: true, size: 24, color: COUL.orange }), t(' — ' + ouvertes.length + ' réserve(s) encore ouverte(s). Il ne vaut pas avis définitif.', { size: 20 })])
+        : p([t('Aucune réserve ouverte : rapport susceptible de version définitive, après relecture et signature de l\u2019associé.', { bold: true, size: 20, color: COUL.canard })]),
+      p([t('Les constats ci-dessous sont établis à partir des bases publiques (cadastre et fichiers fonciers, BODACC, registre national des entreprises, filiation cadastrale) et des pièces reçues à la date du rapport. Ils ne dispensent pas de la lecture des titres et de l\u2019état hypothécaire.', { size: 17, italics: true, color: COUL.gris })], { before: 1200 }),
+      new Paragraph({ children: [new PageBreak()] }),
+    );
+
+    // ---------- 2. Synthèse
+    corps.push(titre('1. Synthèse'));
+    const parc = d.parcelles || {};
+    corps.push(p([
+      t('Le périmètre comprend '), t(nombre(parc.total) + ' parcelle(s)', { bold: true }),
+      t(' réparties sur '), t(nombre(parc.communes) + ' commune(s)', { bold: true }),
+      t(', dont ' + nombre(parc.auditee) + ' au nom de la société auditée' + (parc.autres ? ' et ' + nombre(parc.autres) + ' au nom de sociétés liées' : '') + '. '),
+      t((d.societes || []).length + ' société(s) entrent dans l\u2019organigramme examiné.'),
+    ]));
+    const L1 = [700, 5938, 3000];
+    corps.push(tableau(L1, familles.map((f) => [
+      String(f.numero), (f.libelle || '') + (f.voyants && f.voyants.length ? '' : ' (non analysée)'), caseCouleur(f.couleur, L1[2]),
+    ]), ['N°', 'Famille', 'Appréciation']));
+
+    const carmins = [];
+    familles.forEach((f) => (f.voyants || []).forEach((v) => { if (v.couleur === 'carmin') carmins.push({ f, v }); }));
+    corps.push(titre('Points de discordance', 2));
+    if (carmins.length) {
+      carmins.forEach(({ f, v }) => corps.push(p([pastille('carmin'), t(f.numero + '. ' + f.libelle + ' — ', { bold: true }), t(v.libelle + ' : ', { bold: true }), t(v.texte)], { indent: { left: 200 } })));
+    } else {
+      corps.push(p('Aucune discordance relevée à ce stade.', { italics: true }));
+    }
+
+    // ---------- 3. Les dix familles
+    corps.push(titre('2. Analyse par famille'));
+    familles.forEach((f) => {
+      corps.push(new Paragraph({
+        children: [pastille(f.couleur), t(f.numero + '. ' + (f.libelle || ''), { bold: true, size: 23, color: COUL.nuit }), t(f.couleur ? '  — ' + LIBELLE_COUL[f.couleur] : '  — non analysée', { size: 19, color: COUL.gris })],
+        spacing: { before: 240, after: 80 }, keepNext: true,
+      }));
+      if (f.note_fixe) corps.push(p(f.note_fixe, { italics: true, color: '4A5562', size: 19 }));
+      if (!f.voyants || !f.voyants.length) {
+        corps.push(p('Aucun constat n\u2019a encore pu être établi pour cette famille.', { italics: true, color: COUL.gris }));
+      }
+      (f.voyants || []).forEach((v) => corps.push(p([pastille(v.couleur), t((v.libelle || '') + ' — ', { bold: true }), t(v.texte || '')], { indent: { left: 200 } })));
+    });
+
+    // ---------- 4. Organigramme des sociétés
+    corps.push(titre('3. Organigramme des sociétés examinées'));
+    corps.push(p('Toutes les sociétés détectées sont listées, y compris les sociétés cessées ou absorbées. Le retrait indique le niveau dans l\u2019arborescence.', { italics: true, color: COUL.gris, size: 18 }));
+    const L3 = [3900, 1300, 1500, 1300, 1638];
+    corps.push(tableau(L3, (d.societes || []).map((s) => [
+      cellule(p([t((s.niveau ? '\u2514 ' : '') + (s.denomination || '—'), { bold: !s.niveau, size: 18 })], { after: 0, indent: { left: Math.min(Number(s.niveau || 0), 4) * 240 } }), L3[0]),
+      s.siren || '—',
+      s.role_fusion ? String(s.role_fusion).toLowerCase() : (s.niveau ? 'liée' : 'société auditée'),
+      nombre(s.parcelles),
+      s.etat_administratif === 'cessee' ? 'Cessée' : s.etat_administratif === 'active' ? 'Active' : '—',
+    ]), ['Dénomination', 'SIREN', 'Rôle', 'Parcelles', 'Registre']));
+
+    // ---------- 5. Réserves
+    corps.push(titre('4. Réserves'));
+    if (!reserves.length) corps.push(p('Aucune réserve.', { italics: true }));
+    else {
+      const L4 = [4200, 1700, 3738];
+      corps.push(tableau(L4, reserves.map((r) => [
+        (r.libelle || r.code) + (r.detail ? ' — ' + r.detail : ''),
+        r.levee_le ? 'Levée le ' + dateFr(r.levee_le) : 'Ouverte',
+        r.levee_le ? (r.levee_par ? r.levee_par + ' : ' : '') + (r.motif_levee || '') : (r.levee_sous_code ? 'Levée réservée à l\u2019associé' : 'À lever par le collaborateur'),
+      ]), ['Réserve', 'État', 'Observation']));
+    }
+
+    // ---------- 6. Pièces
+    corps.push(titre('5. Pièces à obtenir et pièces reçues'));
+    const registre = d.registre || [];
+    if (!registre.length) corps.push(p('Aucune pièce au registre.', { italics: true }));
+    else {
+      const L5 = [700, 5200, 1900, 1838];
+      corps.push(tableau(L5, registre.map((x) => [
+        String(x.famille ?? ''), x.libelle || '—', x.destinataire_type ? (DESTINATAIRE[x.destinataire_type] || String(x.destinataire_type).replace(/_/g, ' ')) : '—',
+        STATUT_PIECE[x.statut] || x.statut || '—',
+      ]), ['Fam.', 'Pièce', 'Auprès de', 'État']));
+    }
+
+    // ---------- 7. Intégrité
+    const journal = d.journal || {};
+    corps.push(titre('6. Intégrité du dossier'));
+    corps.push(p('Chaque opération faite sur ce dossier est inscrite dans un journal dont les lignes sont chaînées entre elles par empreintes numériques (SHA-256). L\u2019empreinte de tête ci-dessous résume l\u2019état complet du journal à la date du rapport : toute modification ultérieure d\u2019une ligne passée la rendrait différente.', { size: 19 }));
+    corps.push(p([t('État de la chaîne : ', { bold: true }), t(journal.chaine && journal.chaine.etat ? journal.chaine.etat : '—', { bold: true, color: journal.chaine && journal.chaine.etat === 'intègre' ? COUL.canard : COUL.carmin })]));
+    corps.push(p([t('Empreinte de tête au ' + dateFr(maintenant) + ' :', { bold: true })], { after: 40 }));
+    corps.push(p([t(journal.tete || '—', { size: 17, color: COUL.nuit })], {
+      border: { top: bord, bottom: bord, left: bord, right: bord },
+    }));
+
+    const pied = new Footer({
+      children: [new Paragraph({
+        alignment: AlignmentType.CENTER,
+        border: { top: { style: BorderStyle.SINGLE, size: 4, color: COUL.bord, space: 4 } },
+        children: [
+          t('FIDAL Notaires — Rapport d\u2019audit ' + (doss.reference || '') + (provisoire ? ' — PROVISOIRE' : '') + ' — page ', { size: 15, color: COUL.gris }),
+          new TextRun({ children: [PageNumber.CURRENT], font: POLICE, size: 15, color: COUL.gris }),
+          t(' sur ', { size: 15, color: COUL.gris }),
+          new TextRun({ children: [PageNumber.TOTAL_PAGES], font: POLICE, size: 15, color: COUL.gris }),
+        ],
+      })],
+    });
+    const tete = new Header({
+      children: [new Paragraph({
+        alignment: AlignmentType.RIGHT,
+        children: [t((doss.denomination || '') + ' · ' + (doss.reference || ''), { size: 15, color: COUL.gris })],
+      })],
+    });
+
+    return new Document({
+      creator: 'MARTEAU — FIDAL Notaires',
+      title: 'Rapport d\u2019audit ' + (doss.reference || ''),
+      styles: {
+        default: { document: { run: { font: POLICE, size: 20 } } },
+        paragraphStyles: [
+          { id: 'Heading1', name: 'Heading 1', basedOn: 'Normal', next: 'Normal', quickFormat: true, run: { font: POLICE, size: 28, bold: true, color: COUL.nuit }, paragraph: { spacing: { before: 360, after: 120 }, keepNext: true, outlineLevel: 0 } },
+          { id: 'Heading2', name: 'Heading 2', basedOn: 'Normal', next: 'Normal', quickFormat: true, run: { font: POLICE, size: 23, bold: true, color: COUL.nuit }, paragraph: { spacing: { before: 240, after: 120 }, keepNext: true, outlineLevel: 1 } },
+        ],
+      },
+      sections: [{
+        properties: { page: { size: { width: 11906, height: 16838 }, margin: { top: 1134, bottom: 1134, left: 1134, right: 1134 } }, titlePage: true },
+        headers: { default: tete },
+        footers: { default: pied, first: new Footer({ children: [new Paragraph({ children: [] })] }) },
+        children: corps,
+      }],
+    });
+  }
+
+  function nomFichier(d) {
+    const doss = d.dossier || {};
+    const nom = String(doss.denomination || doss.siren || 'dossier').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^A-Za-z0-9]+/g, '_').replace(/^_|_$/g, '');
+    const jour = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    return 'Rapport_audit_' + (doss.reference || '') + '_' + nom + '_' + jour + '.docx';
+  }
+
+  // Dans le navigateur : fabrique le fichier et le télécharge.
+  async function telechargerRapport(d) {
+    if (!racine.docx) throw new Error('bibliothèque Word non chargée');
+    const doc = construireRapport(racine.docx, d);
+    const blob = await racine.docx.Packer.toBlob(doc);
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = nomFichier(d);
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+    return a.download;
+  }
+
+  const api = { construireRapport, telechargerRapport, nomFichier, VERSION: '1.0' };
+  if (typeof module !== 'undefined' && module.exports) module.exports = api;
+  racine.MarteauRapport = api;
+})(typeof window !== 'undefined' ? window : globalThis);
+
+</script>
 <script>
 const REDPAR = 'https://redpar-backend.vercel.app';
 const OUTIL = (p) => `https://${p}-jean-francoisdumetz-7391s-projects.vercel.app/`;
