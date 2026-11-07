@@ -346,6 +346,9 @@
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <script src="https://connexion-omega.vercel.app/acces.js" defer></script>
 <script src="https://attente.vercel.app/attente.js?v=5.0" defer></script>
+<!-- 07/11/2026 : rapport d'audit Word, fabriqué dans le navigateur (docx 8, comme PLUME) -->
+<script src="https://cdn.jsdelivr.net/npm/docx@8.5.0/build/index.umd.js" defer></script>
+<script src="/rapport.js?v=1.0" defer></script>
 <script>
 const REDPAR = 'https://redpar-backend.vercel.app';
 const OUTIL = (p) => `https://${p}-jean-francoisdumetz-7391s-projects.vercel.app/`;
@@ -807,6 +810,7 @@ async function afficherEtat(ref) {
   // recalculable ; la piste d'audit, elle, garde chaque passage.
   h += '<div class="rang" style="margin:-4px 0 12px"><div style="flex:0 0 auto">'
     + '<button class="sec" id="relancer">Relancer l\'analyse</button></div>'
+    + '<div style="flex:0 0 auto"><button id="rapport-word">Rapport d\'audit (Word)</button></div>'
     + '<div style="flex:1 1 auto" class="att">Recalcule les dix familles depuis la base, sans réinterroger REDPAR ni le BODACC.</div></div>';
 
   // 14/10/2026 — rapport de RISQUES du portefeuille (mode différé)
@@ -904,6 +908,17 @@ async function afficherEtat(ref) {
   $('#risques-go').addEventListener('click', () => lancerRisques(ref, quiDem()));
   // un travail commandé et non fini (onglet refermé, page rechargée) : on reprend le suivi
   if (d.risques && d.risques.statut === 'en_cours' && d.risques.interroger && !risquesSuivi[ref]) suivreRisques(ref, d.risques, quiDem(), true);
+
+  // 07/11/2026 — rapport d'audit Word, tiré de l'état qu'on vient de lire (rien n'est réinterrogé)
+  $('#rapport-word').addEventListener('click', async () => {
+    const b = $('#rapport-word'); b.disabled = true; const avant = b.textContent; b.textContent = 'Rédaction du rapport…';
+    try {
+      if (!window.MarteauRapport) throw new Error('module rapport non chargé, rechargez la page');
+      const nom = await window.MarteauRapport.telechargerRapport(d);
+      b.textContent = 'Rapport téléchargé ✓'; b.title = nom;
+    } catch (err) { b.textContent = avant; alert('Rapport impossible : ' + err.message); }
+    finally { b.disabled = false; setTimeout(() => { b.textContent = avant; }, 3000); }
+  });
 
   $('#relancer').addEventListener('click', async () => {
     const b = $('#relancer');
