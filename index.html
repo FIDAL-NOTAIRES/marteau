@@ -407,7 +407,14 @@
     const provisoire = doss.etat === 'provisoire' || ouvertes.length > 0;
 
     // ---------- petites briques
-    const t = (texte, o = {}) => new TextRun({ text: String(texte ?? ''), font: POLICE, size: o.size || 20, bold: o.bold, italics: o.italics, color: o.color || '1A1A1A' });
+    // 07/11 : accord automatique au singulier ou au pluriel après un nombre (« 1 parcelle », « 3 parcelles »)
+    const accorde = (s) => s.replace(/(\d[\d\u202f\u00a0]*)([^\d.;:]*)/g, (m, num, suite) => {
+      const pl = parseInt(num.replace(/\D/g, ''), 10) > 1;
+      suite = suite.replace(/\(s\)/g, pl ? 's' : '');
+      if (!pl) suite = suite.replace(/^(\s+)(parcelle|commune|société|réserve|pièce|voyant|groupe|annonce|entreprise)s\b/, '$1$2');
+      return num + suite;
+    });
+    const t = (texte, o = {}) => new TextRun({ text: accorde(String(texte ?? '')), font: POLICE, size: o.size || 20, bold: o.bold, italics: o.italics, color: o.color || '1A1A1A' });
     const p = (enfants, o = {}) => new Paragraph({
       children: Array.isArray(enfants) ? enfants : [t(enfants, o)],
       alignment: o.align, spacing: { before: o.before ?? 0, after: o.after ?? 120, line: 276 },
@@ -468,7 +475,7 @@
       t('Le périmètre comprend '), t(nombre(parc.total) + ' parcelle(s)', { bold: true }),
       t(' réparties sur '), t(nombre(parc.communes) + ' commune(s)', { bold: true }),
       t(', dont ' + nombre(parc.auditee) + ' au nom de la société auditée' + (parc.autres ? ' et ' + nombre(parc.autres) + ' au nom de sociétés liées' : '') + '. '),
-      t((d.societes || []).length + ' société(s) entrent dans l\u2019organigramme examiné.'),
+      t((d.societes || []).length + ' société(s) ' + ((d.societes || []).length > 1 ? 'entrent' : 'entre') + ' dans l\u2019organigramme examiné.'),
     ]));
     const L1 = [700, 5938, 3000];
     corps.push(tableau(L1, familles.map((f) => [
@@ -516,7 +523,7 @@
     else {
       const L4 = [4200, 1700, 3738];
       corps.push(tableau(L4, reserves.map((r) => [
-        (r.libelle || r.code) + (r.detail ? ' — ' + r.detail : ''),
+        (r.libelle || r.code) + ((typeof r.detail === 'string' ? r.detail : (r.detail && (r.detail.texte || r.detail.libelle || r.detail.motif))) ? ' — ' + (typeof r.detail === 'string' ? r.detail : (r.detail.texte || r.detail.libelle || r.detail.motif)) : ''),
         r.levee_le ? 'Levée le ' + dateFr(r.levee_le) : 'Ouverte',
         r.levee_le ? (r.levee_par ? r.levee_par + ' : ' : '') + (r.motif_levee || '') : (r.levee_sous_code ? 'Levée réservée à l\u2019associé' : 'À lever par le collaborateur'),
       ]), ['Réserve', 'État', 'Observation']));
