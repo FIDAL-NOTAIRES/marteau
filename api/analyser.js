@@ -105,13 +105,30 @@ export default async function handler(req, res) {
        ORDER BY count(*) DESC
     ` : [];
 
+    // Dates de demande RÉELLES (règle du 08/11/2026). Une phrase ne porte
+    // une date que si la pièce a été marquée demandée (ou l'état
+    // hypothécaire saisi) dans MARTEAU : c'est `premier_envoi_le`, posé une
+    // seule fois. Avant, la date était celle du jour de l'analyse — le
+    // rapport affirmait une diligence non faite, et la date changeait à
+    // chaque relance.
+    const envois = await sql`
+      SELECT libelle, premier_envoi_le FROM marteau_piece
+       WHERE dossier_id = ${d.id} AND premier_envoi_le IS NOT NULL
+    `;
+    const envoyeLe = (libelle) => {
+      const r = envois.find((x) => x.libelle === libelle);
+      return r ? new Date(r.premier_envoi_le).toLocaleDateString('fr-FR', { timeZone: 'Europe/Paris' }) : null;
+    };
+
     // Chaque entrée : [code de phrase, précisions]. Le niveau est le
     // dossier (ni société ni parcelle) sauf indication.
     const voyants = [];
     const poser = (code, precisions = {}) => voyants.push({ code, precisions });
 
     // 1. identité — le K-bis est demandé par l'étude, jamais au client.
-    poser('identite_attente', { date: aujourdhui() });
+    // Le K-bis n'a pas de ligne au registre des pièces : aucune date de
+    // demande connue, donc la variante sans date.
+    poser('identite_a_solliciter');
     // Société auditée CESSÉE au registre : au moins orange. Si le BODACC a
     // désigné une absorbante, c'est la discordance du mémo — le vendeur au
     // titre n'est plus la société immatriculée — donc carmin.
@@ -182,7 +199,8 @@ export default async function handler(req, res) {
     // 5. hypothécaire — inscriptions en attente ; nature du droit CALCULÉE
     // sur les seules parcelles de la société auditée : la phrase parle
     // d'elle, elle ne peut pas compter celles des autres.
-    poser('hypo_attente', { date: aujourdhui() });
+    { const le = envoyeLe('État hypothécaire');
+      if (le) poser('hypo_attente', { date: le }); else poser('hypo_a_solliciter'); }
     if (parc.demembre > 0) {
       poser('nature_droit_orange', { parcelles: parc.demembre, codes: (parc.codes ?? []).join(', ') });
     } else if (parc.total > 0) {
@@ -190,7 +208,8 @@ export default async function handler(req, res) {
     }
 
     // 6. urbanisme — trois volets en attente ; assurance sans travaux connus.
-    poser('urba_attente', { date: aujourdhui() });
+    { const le = envoyeLe("Liste des autorisations d'urbanisme délivrées");
+      if (le) poser('urba_attente', { date: le }); else poser('urba_a_solliciter'); }
     poser('zone_attente');
     // Pas `assurance_attente` : elle affirmerait des travaux relevés,
     // alors qu'aucune source d'autorisations n'est encore lue.
