@@ -473,7 +473,7 @@
     const parc = d.parcelles || {};
     corps.push(p([
       t('Le périmètre comprend '), t(nombre(parc.total) + ' parcelle(s)', { bold: true }),
-      t(' réparties sur '), t(nombre(parc.communes) + ' commune(s)', { bold: true }),
+      t(Number(parc.total || 0) > 1 ? ' réparties sur ' : ' répartie sur '), t(nombre(parc.communes) + ' commune(s)', { bold: true }),
       t(', dont ' + nombre(parc.auditee) + ' au nom de la société auditée' + (parc.autres ? ' et ' + nombre(parc.autres) + ' au nom de sociétés liées' : '') + '. '),
       t((d.societes || []).length + ' société(s) ' + ((d.societes || []).length > 1 ? 'entrent' : 'entre') + ' dans l\u2019organigramme examiné.'),
     ]));
