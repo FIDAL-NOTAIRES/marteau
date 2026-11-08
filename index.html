@@ -1551,7 +1551,7 @@ async function suivreRisques(ref, etat, qui, reprise) {
       const r = await fetch(etat.interroger);
       const j = await r.json();
       if (j.statut === 'termine') {
-        await enregistrerRisques(ref, qui, { statut: 'termine', rapport: j.rapport, erps: j.erps, expire_le: j.expire_le });
+        await enregistrerRisques(ref, qui, { statut: 'termine', rapport: j.rapport, erps: j.erps, expire_le: j.expire_le, biens: j.biens || [] });
         if (A) A.terminer();
         break;
       }
