@@ -58,7 +58,7 @@ export default async function handler(req, res) {
 
   try {
     const sql = db();
-    const [d] = await sql`SELECT id, reference, siren_tete FROM marteau_dossier WHERE reference = ${dossier}`;
+    const [d] = await sql`SELECT id, reference, siren_tete, risques FROM marteau_dossier WHERE reference = ${dossier}`;
     if (!d) return res.status(404).json({ erreur: `dossier ${dossier} inconnu` });
 
     const refs = await sql`SELECT id, famille, code FROM marteau_voyant_ref`;
@@ -220,8 +220,57 @@ export default async function handler(req, res) {
     // 7. diagnostics — ADEME non encore branchée : on le dit.
     poser('diag_liste', { liste: 'liste calculée à venir — usage et arrêtés préfectoraux à déterminer' });
 
-    // 8. environnement — RISQUES non encore appelé : la raison est dite.
-    poser('env_non_verifie', { raison: 'le module RISQUES n\'est pas encore raccordé à MARTEAU' });
+    // 8. environnement — lecture du rapport de RISQUES (grille validée par
+    // JFD le 08/11/2026). MARTEAU commande le rapport depuis la page du
+    // dossier ; il en garde la réponse finale dans `marteau_dossier.risques`,
+    // dont `biens[].rubriques[]` (statut de chacune des quinze rubriques).
+    //   - pas de rapport, en cours, en échec, ou rapport antérieur au
+    //     08/11 (sans rubriques) : jaune, la raison est dite ;
+    //   - PPR approuvé (rubriques 1 à 3) au niveau maximal : carmin ;
+    //   - PPR approuvé, autre zone : orange ;
+    //   - sites et sols pollués « concerné » : orange ;
+    //   - une base muette : jaune « partielles » ;
+    //   - le reste (sismicité, radon, argiles, bruit…) relève de
+    //     l'information de l'acquéreur : jaune, état du client attendu.
+    {
+      const rq = d.risques || null;
+      const biensRq = rq && Array.isArray(rq.biens) ? rq.biens : [];
+      if (!rq || !rq.statut) {
+        poser('env_non_verifie', { raison: "le rapport de risques du portefeuille n'a pas encore été commandé à RISQUES" });
+      } else if (rq.statut === 'en_cours') {
+        poser('env_non_verifie', { raison: 'le rapport de risques du portefeuille est en cours de production par RISQUES' });
+      } else if (rq.statut !== 'termine') {
+        poser('env_non_verifie', { raison: "le rapport de risques du portefeuille commandé à RISQUES n'a pas abouti et doit être commandé de nouveau" });
+      } else if (!biensRq.length) {
+        poser('env_non_verifie', { raison: 'le rapport de risques du portefeuille est à actualiser pour que ses résultats soient repris ici' });
+      } else {
+        const nomBien = (b) => 'groupe ' + b.numero + (b.refs && b.refs.length ? ' (' + b.refs.slice(0, 3).join(', ') + (b.refs.length > 3 ? '…' : '') + ')' : '');
+        const lister = (items) => items.slice(0, 5).join(' ; ') + (items.length > 5 ? ` ; et ${items.length - 5} autre(s) bien(s)` : '');
+        const PPR = ['pprt', 'pprn', 'pprm'];
+        const rouge = [], ppr = [], sols = [], muettes = new Set(), introuvables = [];
+        for (const b of biensRq) {
+          if (b.introuvable) introuvables.push(nomBien(b));
+          for (const r of b.rubriques || []) {
+            if (r.statut === 'non_obtenu') muettes.add(r.intitule);
+            if (r.statut !== 'concerne') continue;
+            const texte = nomBien(b) + ' : ' + String(r.phrase || r.intitule || '').replace(/\.$/, '');
+            if (PPR.includes(r.cle)) (r.maximal ? rouge : ppr).push(texte);
+            else if (r.cle === 'sis') sols.push(texte);
+          }
+        }
+        if (rouge.length) poser('env_zone_rouge', { precision: lister(rouge) });
+        if (ppr.length) poser('env_ppr', { precision: lister(ppr) });
+        if (sols.length) poser('env_sols_concerne', { precision: lister(sols) });
+        if (muettes.size || introuvables.length) {
+          const manque = [];
+          if (muettes.size) manque.push('rubriques non renseignées : ' + [...muettes].join(', '));
+          if (introuvables.length) manque.push('biens non traités : ' + lister(introuvables));
+          poser('env_partiel', { precision: manque.join(' ; ') });
+        } else {
+          poser('env_attente_client');
+        }
+      }
+    }
 
     // 9. exploitation et contrats
     poser('exploit_attente');
