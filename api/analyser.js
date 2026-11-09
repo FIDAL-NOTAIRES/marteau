@@ -304,7 +304,7 @@ export default async function handler(req, res) {
     // Pas `assurance_attente` : elle affirmerait des travaux relevés,
     // alors qu'aucune source d'autorisations n'est encore lue.
     poser('assurance_non_verifie', {
-      raison: "le recensement des autorisations d'urbanisme n'est pas encore raccordé à MARTEAU",
+      raison: "le recensement des autorisations d'urbanisme délivrées n'a pas encore été obtenu",
     });
 
     // 7. diagnostics — arrêtés termites et mérule lus dans XYLO (règle
