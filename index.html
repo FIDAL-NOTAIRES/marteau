@@ -1187,7 +1187,7 @@ async function afficherEtat(ref) {
   // repasse orange de lui-même, page ouverte, au bout des deux heures.
   h += '<div class="rang" style="margin:-4px 0 12px"><div style="flex:0 0 auto">'
     + '<button class="' + classeActu(d.dossier.derniere_actualisation) + '" id="relancer">Actualiser le dossier</button></div>'
-    + '<div style="flex:0 0 auto"><button id="rapport-word">Rapport d\'audit (Word)</button></div>'
+    + '<div style="flex:0 0 auto"><button class="sec" id="rapport-word">Rapport d\'audit (Word)</button></div>'
     + '<div style="flex:1 1 auto" class="att"><span id="actu-age">' + texteActu(d.dossier.derniere_actualisation) + '</span><br>Réinterroge REDPAR, le BODACC et le registre, puis la filiation cadastrale et les arrêtés termites et mérule, et recalcule les dix familles. Le rapport de risques se commande à part.</div></div>';
 
   // 14/10/2026 — rapport de RISQUES du portefeuille (mode différé)
