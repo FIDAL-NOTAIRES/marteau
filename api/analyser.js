@@ -385,11 +385,11 @@ export default async function handler(req, res) {
       const rq = d.risques || null;
       const biensRq = rq && Array.isArray(rq.biens) ? rq.biens : [];
       if (!rq || !rq.statut) {
-        poser('env_non_verifie', { raison: "le rapport de risques du portefeuille n'a pas encore été commandé à RISQUES" });
+        poser('env_non_verifie', { raison: "l'état des risques établi par l'étude n'a pas encore été produit" });
       } else if (rq.statut === 'en_cours') {
-        poser('env_non_verifie', { raison: 'le rapport de risques du portefeuille est en cours de production par RISQUES' });
+        poser('env_non_verifie', { raison: "l'état des risques établi par l'étude est en cours de production" });
       } else if (rq.statut !== 'termine') {
-        poser('env_non_verifie', { raison: "le rapport de risques du portefeuille commandé à RISQUES n'a pas abouti et doit être commandé de nouveau" });
+        poser('env_non_verifie', { raison: "l'état des risques établi par l'étude n'a pas abouti et doit être produit de nouveau" });
       } else if (!biensRq.length) {
         poser('env_non_verifie', { raison: 'le rapport de risques du portefeuille est à actualiser pour que ses résultats soient repris ici' });
       } else {
