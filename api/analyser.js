@@ -444,7 +444,7 @@ export default async function handler(req, res) {
         } catch (e) { console.error('[MARTEAU] XYLO injoignable :', e.message); }
 
         if (!xy || !xy.communes) {
-          liste.push("situation au regard des arrêtés termites et mérule NON VÉRIFIÉE (la base des arrêtés préfectoraux n'a pas répondu, relancer l'analyse)");
+          poser('diag_arretes_non_verifie');
         } else {
           const termites = [], merule = [], partiel = [], aucun = [];
           for (const c of communes) {
@@ -465,10 +465,18 @@ export default async function handler(req, res) {
           if (termites.length) liste.push('état relatif à la présence de termites (' + court(termites) + ')');
           if (merule.length) liste.push("information de l'acquéreur sur le risque de mérule (" + court(merule) + ')');
           if (partiel.length) liste.push('situation à vérifier sur l\'annexe de l\'arrêté, zonage partiel de la commune (' + court(partiel) + ')');
-          if (aucun.length) liste.push('aucun arrêté termites ni mérule, vérifié sur la base des arrêtés préfectoraux le ' + aujourdhui() + ' (' + court(aucun) + ')');
+          // Phrase à part (arbitrage du 09/11/2026) : l'absence d'arrêté n'est
+          // pas un diagnostic attendu, elle ne va plus dans la liste.
+          if (aucun.length) {
+            poser('diag_arretes_aucun', {
+              communes: court(aucun),
+              est_visee: aucun.length > 1 ? "ne sont visées" : "n'est visée",
+              date: aujourdhui(),
+            });
+          }
         }
       }
-      liste.push("autres diagnostics : liste calculée à venir selon l'usage du bien");
+      liste.push(liste.length ? "autres diagnostics selon l'usage du bien, liste à venir" : "liste à établir selon l'usage du bien");
       poser('diag_liste', { liste: liste.join(' ; ') });
     }
 
