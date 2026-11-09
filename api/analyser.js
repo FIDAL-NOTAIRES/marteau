@@ -278,7 +278,7 @@ export default async function handler(req, res) {
           let t = nom + ' : ';
           const zones = [...new Set((u.zones || []).map((z) => z.libelle + (z.libelong ? ' — ' + z.libelong.replace(/\.$/, '') : '')))];
           const TYPE_DOC = { PLU: "plan local d'urbanisme", PLUI: "plan local d'urbanisme intercommunal", POS: "plan d'occupation des sols", CC: 'carte communale', PSMV: 'plan de sauvegarde et de mise en valeur' };
-          const docs = (u.documents || []).map((dd) => (TYPE_DOC[String(dd.type || '').toUpperCase()] || dd.type || "document d'urbanisme") + (dd.approuve_le ? ' approuvé le ' + dd.approuve_le : ''));
+          const docs = (u.documents || []).map((dd) => (TYPE_DOC[String(dd.type || '').toUpperCase()] || dd.type || "document d'urbanisme") + (dd.approuve_le ? ' approuvé le ' + dd.approuve_le : ' (date d\'approbation non publiée sur le Géoportail, à vérifier auprès de la commune)'));
           if (zones.length) t += 'zone ' + zones.join(', ') + (docs.length ? ' du ' + docs.join(', ') : '');
           else if (u.rnu) t += 'commune soumise au règlement national d\'urbanisme, sans document local';
           else if (docs.length) t += docs.join(', ') + ', zonage non publié pour cette parcelle';
