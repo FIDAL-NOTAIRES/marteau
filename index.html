@@ -34,6 +34,11 @@
   button:hover{background:#2b6f76}
   button.sec{background:#fff;color:var(--nuit);border:1px solid var(--bord)}
   button:disabled{opacity:.45;cursor:default}
+  /* 09/11/2026 — bouton « Actualiser le dossier » : orange au-delà de deux heures, canard en deçà */
+  button.actu-vieille{background:var(--orange);color:var(--nuit);border:1px solid var(--orange)}
+  button.actu-vieille:hover{background:#E8861F}
+  button.actu-fraiche{background:var(--canard);color:#fff;border:1px solid var(--canard)}
+  button.actu-fraiche:hover{background:#2b6f76}
   .rang{display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap}
   .rang > div{flex:1;min-width:220px}
   .tuiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:16px}
@@ -335,6 +340,8 @@
   <div id="page-dossier" style="display:none">
     <div class="barre-ecran">
       <span id="titre-dossier" style="font-family:Georgia,serif;font-size:17px"></span></div>
+    <!-- 09/11/2026 : informations du dossier et alerte de délai, remontées sous le titre -->
+    <div id="tete-dossier"></div>
     <!-- 15/10/2026 : navigation dans la page du dossier, collée en haut de l'écran au défilement -->
     <nav id="nav-dossier" style="position:sticky;top:0;z-index:5;background:var(--fond,#f4f5f7);padding:8px 0 10px;margin:-6px 0 8px;display:flex;gap:6px;flex-wrap:wrap">
       <a href="#" data-cible="sec-familles" class="nav-d">Familles</a><a href="#" data-cible="sec-reserves" class="nav-d">Réserves</a>
@@ -1092,9 +1099,32 @@ $('#ouvre').addEventListener('click', () => {
 // ------------------------------------------------------ état d'un dossier
 // Lecture seule. C'est ce qui survit au rechargement : jauges réelles,
 // réserves ouvertes, sociétés du périmètre, queue du journal chaîné.
+const DEUX_HEURES = 2 * 60 * 60 * 1000;
+function classeActu(le) {
+  return le && (Date.now() - new Date(le).getTime()) < DEUX_HEURES ? 'actu-fraiche' : 'actu-vieille';
+}
+function texteActu(le) {
+  if (!le) return 'Jamais actualisé.';
+  const x = new Date(le);
+  return 'Dernière actualisation le ' + x.toLocaleDateString('fr-FR', { timeZone: 'Europe/Paris' })
+    + ' à ' + x.toLocaleTimeString('fr-FR', { timeZone: 'Europe/Paris', hour: '2-digit', minute: '2-digit' }).replace(':', ' h ') + '.';
+}
+let minuteurActu = null;
+function surveillerActu(le) {
+  if (minuteurActu) clearInterval(minuteurActu);
+  minuteurActu = setInterval(() => {
+    const b = document.getElementById('relancer');
+    if (!b) { clearInterval(minuteurActu); minuteurActu = null; return; }
+    if (b.disabled) return;
+    b.classList.remove('actu-fraiche', 'actu-vieille');
+    b.classList.add(classeActu(le));
+  }, 60 * 1000);
+}
+
 async function afficherEtat(ref) {
   montrerEcran('dossier', ref);
   $('#titre-dossier').textContent = 'Dossier ' + ref;
+  $('#tete-dossier').innerHTML = '';
   $('#etat-res').innerHTML = '<div class="att">Lecture du dossier ' + e(ref) + '…</div>';
   const r = await fetch(DOSSIER + '?dossier=' + encodeURIComponent(ref));
   const d = await r.json();
@@ -1113,17 +1143,20 @@ async function afficherEtat(ref) {
     : '<span class="past p-orange"></span>lecture, à confirmer';
   const role = (s) => s.role_fusion ? ' · ' + e(s.role_fusion) : '';
 
-  let h = '<div class="info"><b>Dossier ' + e(d.dossier.reference) + '</b> — ' + e(d.dossier.denomination || d.dossier.siren)
+  let t = '<div class="info"><b>Dossier ' + e(d.dossier.reference) + '</b> — ' + e(d.dossier.denomination || d.dossier.siren)
     + ' · associé ' + e(d.dossier.associe) + (d.dossier.collaborateur ? ' · collaborateur ' + e(d.dossier.collaborateur) : '')
     + ' · ouvert le ' + new Date(d.dossier.ouvert_le).toLocaleString('fr-FR')
     + ' · <b>' + (d.dossier.etat === 'provisoire' ? 'provisoire' : 'définitif possible') + '</b>'
     + '<br>' + infosOuvertureTexte(d.dossier) + '</div>';
-  // 09/11/2026 — alerte de délai en tête de la page du dossier.
+  // 09/11/2026 — alerte de délai en tête de la page du dossier, juste sous
+  // le titre avec la ligne d'informations (et non plus sous les familles).
   if (d.dossier.alerte_delai) {
     const ad = d.dossier.alerte_delai, orange = ad.couleur === 'orange';
-    h += '<div style="margin:0 0 12px;padding:10px 14px;border-left:4px solid ' + (orange ? '#FF982D' : '#A01040')
+    t += '<div style="margin:0 0 12px;padding:10px 14px;border-left:4px solid ' + (orange ? '#FF982D' : '#A01040')
       + ';background:' + (orange ? '#FFF4E8' : '#FCEEF1') + ';color:#0F2238;font-weight:600">⚠ ' + e(ad.texte) + '</div>';
   }
+  $('#tete-dossier').innerHTML = t;
+  let h = '';
 
   // 09/11/2026 — bloc « Informations d'ouverture » : corriger le type
   // d'opération, le délai d'audit ou la date de signature prévue SANS
@@ -1149,10 +1182,13 @@ async function afficherEtat(ref) {
   // BODACC, registre), HISTO, puis l'analyse, qui interroge XYLO en
   // direct. Le rapport de RISQUES garde son bouton : il prend plusieurs
   // minutes. Un échec de collecte ne bloque pas l'analyse : il est dit.
+  // 09/11/2026 (JFD) — le bouton est ORANGE si la dernière actualisation
+  // a plus de deux heures (ou n'a jamais eu lieu), CANARD en deçà ; il
+  // repasse orange de lui-même, page ouverte, au bout des deux heures.
   h += '<div class="rang" style="margin:-4px 0 12px"><div style="flex:0 0 auto">'
-    + '<button class="sec" id="relancer">Actualiser le dossier</button></div>'
+    + '<button class="' + classeActu(d.dossier.derniere_actualisation) + '" id="relancer">Actualiser le dossier</button></div>'
     + '<div style="flex:0 0 auto"><button id="rapport-word">Rapport d\'audit (Word)</button></div>'
-    + '<div style="flex:1 1 auto" class="att">Réinterroge REDPAR, le BODACC et le registre, puis la filiation cadastrale et les arrêtés termites et mérule, et recalcule les dix familles. Le rapport de risques se commande à part.</div></div>';
+    + '<div style="flex:1 1 auto" class="att"><span id="actu-age">' + texteActu(d.dossier.derniere_actualisation) + '</span><br>Réinterroge REDPAR, le BODACC et le registre, puis la filiation cadastrale et les arrêtés termites et mérule, et recalcule les dix familles. Le rapport de risques se commande à part.</div></div>';
 
   // 14/10/2026 — rapport de RISQUES du portefeuille (mode différé)
   h += '<div class="rang" id="sec-risques" style="margin:-4px 0 12px"><div style="flex:0 0 auto">'
@@ -1239,6 +1275,7 @@ async function afficherEtat(ref) {
     + '<p class="att" style="margin:8px 0 4px">Empreinte de tête :</p><pre style="font-size:11px">' + e(d.journal.tete || '—') + '</pre></details>';
 
   $('#etat-res').innerHTML = h;
+  surveillerActu(d.dossier.derniere_actualisation);
 
   // Demandes de pièces : préparer (ne rien écrire), marquer (poser la date
   // et journaliser), saisir (état hypothécaire au logiciel métier).
