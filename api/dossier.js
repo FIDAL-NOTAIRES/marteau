@@ -23,6 +23,8 @@
 //   POST /api/dossier  { action, ... }
 //     ouvrir    { siren, denomination?, associe, collaborateur?, qui,
 //                 type_operation, delai_audit_jours, date_signature_prevue? }
+//     modifier  { dossier, type_operation?, delai_audit_jours?, date_signature_prevue?, qui }
+//               (informations d'ouverture seules ; aucune collecte relancée)
 //     lister    { clos? }
 //     lire      { dossier }
 //     lever     { dossier, reserve, motif, qui, code? }
@@ -83,6 +85,38 @@ function echeanceAudit(ouvert_le, delai) {
 // La colonne `date` revient du pilote en objet Date (minuit UTC) : on la
 // rend en AAAA-MM-JJ pour que la façade n'ait pas à deviner le fuseau.
 const jourIso = (v) => (v ? (v instanceof Date ? v.toISOString().slice(0, 10) : String(v).slice(0, 10)) : null);
+
+// Applique les informations d'ouverture à un dossier existant et
+// journalise ce qui change. Partagé par la REPRISE (ouvrir sur un SIREN
+// déjà ouvert) et par MODIFIER (bloc de la page du dossier).
+// `remplacerDate` : vrai pour MODIFIER, où un champ date vide vaut
+// « plus de date prévue » ; faux pour la reprise, où il ne vaut rien.
+async function appliquerInfos(sql, existant, { type, delai, date }, auteur, remplacerDate) {
+  const avant = {
+    type_operation: existant.type_operation ?? null,
+    delai_audit_jours: existant.delai_audit_jours ?? null,
+    date_signature_prevue: jourIso(existant.date_signature_prevue),
+  };
+  const apres = {
+    type_operation: type ?? avant.type_operation,
+    delai_audit_jours: delai ?? avant.delai_audit_jours,
+    date_signature_prevue: remplacerDate ? date : (date ?? avant.date_signature_prevue),
+  };
+  const change = Object.keys(apres).filter((k) => apres[k] !== avant[k]);
+  if (change.length) {
+    await sql`
+      UPDATE marteau_dossier
+         SET type_operation = ${apres.type_operation},
+             delai_audit_jours = ${apres.delai_audit_jours}::int,
+             date_signature_prevue = ${apres.date_signature_prevue}::date
+       WHERE id = ${existant.id}
+    `;
+    await journaliser(existant.id, auteur, 'informations d\u2019ouverture modifiées', {
+      champs: change, avant, apres,
+    });
+  }
+  return change;
+}
 
 // Gravité croissante. Sert deux fois : la couleur d'une famille est la
 // plus grave de ses voyants, celle d'un dossier la plus grave de ses
@@ -259,6 +293,7 @@ export default async function handler(req, res) {
 
     switch (action) {
       case 'ouvrir':   return await ouvrir(res, corps);
+      case 'modifier': return await modifier(res, corps);
       case 'lister':   return await lister(res, { clos: Boolean(corps.clos) });
       case 'lire':     {
         const ref = String(corps.dossier ?? '').trim();
@@ -273,7 +308,7 @@ export default async function handler(req, res) {
       case 'risques':  return await risques(res, corps);
       default:
         return res.status(400).json({
-          erreur: 'action attendue : ouvrir | lister | lire | lever | preparer | marquer | saisir | histo | risques',
+          erreur: 'action attendue : ouvrir | modifier | lister | lire | lever | preparer | marquer | saisir | histo | risques',
         });
     }
   } catch (e) {
@@ -323,30 +358,7 @@ async function ouvrir(res, corps) {
     // rien n'est effacé ; tout changement est journalisé.
     const lu = infosOuverture(corps, false);
     if (lu.erreur) return res.status(400).json({ erreur: lu.erreur });
-    const { type, delai, date } = lu.valeurs;
-    const avant = {
-      type_operation: existant.type_operation ?? null,
-      delai_audit_jours: existant.delai_audit_jours ?? null,
-      date_signature_prevue: jourIso(existant.date_signature_prevue),
-    };
-    const apres = {
-      type_operation: type ?? avant.type_operation,
-      delai_audit_jours: delai ?? avant.delai_audit_jours,
-      date_signature_prevue: date ?? avant.date_signature_prevue,
-    };
-    const change = Object.keys(apres).filter((k) => apres[k] !== avant[k]);
-    if (change.length) {
-      await sql`
-        UPDATE marteau_dossier
-           SET type_operation = ${apres.type_operation},
-               delai_audit_jours = ${apres.delai_audit_jours}::int,
-               date_signature_prevue = ${apres.date_signature_prevue}::date
-         WHERE id = ${existant.id}
-      `;
-      await journaliser(existant.id, auteur, 'informations d\u2019ouverture modifiées', {
-        champs: change, avant, apres,
-      });
-    }
+    const change = await appliquerInfos(sql, existant, lu.valeurs, auteur, false);
     return res.status(200).json({ dossier: existant.reference, repris: true, modifie: change });
   }
 
@@ -394,6 +406,33 @@ async function ouvrir(res, corps) {
 
   const [{ tete }] = await sql`SELECT marteau_journal_tete() AS tete`;
   return res.status(201).json({ dossier: d.reference, repris: false, journal_tete: tete });
+}
+
+// =====================================================================
+// modifier — informations d'ouverture depuis la page du dossier
+// =====================================================================
+//
+// 09/11/2026 (accord de JFD) : corriger une date de signature qui glisse
+// ne doit pas imposer une recollecte. Écrit seulement les trois champs,
+// journalise l'ancienne et la nouvelle valeur, ne touche à rien d'autre.
+// Refusé sur un dossier clos : il n'y a plus d'audit à piloter.
+
+async function modifier(res, corps) {
+  const ref = String(corps.dossier ?? '').trim();
+  if (!ref) return res.status(400).json({ erreur: 'dossier requis' });
+  const lu = infosOuverture(corps, false);
+  if (lu.erreur) return res.status(400).json({ erreur: lu.erreur });
+  const sql = db();
+  const [d] = await sql`
+    SELECT id, reference, clos_le, associe_en_charge, collaborateur,
+           type_operation, delai_audit_jours, date_signature_prevue
+      FROM marteau_dossier WHERE reference = ${ref}
+  `;
+  if (!d) return res.status(404).json({ erreur: `dossier ${ref} inconnu` });
+  if (d.clos_le) return res.status(409).json({ erreur: 'dossier clos : informations figées' });
+  const auteur = majuscule(corps.qui || d.collaborateur || d.associe_en_charge);
+  const change = await appliquerInfos(sql, d, lu.valeurs, auteur, true);
+  return res.status(200).json({ dossier: d.reference, modifie: change });
 }
 
 // =====================================================================
