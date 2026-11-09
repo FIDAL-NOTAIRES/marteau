@@ -45,6 +45,7 @@
 import { db, journaliser } from '../lib/db.js';
 import { rendre } from '../lib/phrases.js';
 import { sousFamille, cheminDrive } from '../lib/nomenclature.js';
+import { echeanceAudit, alerteDelai } from '../lib/delais.js';
 
 const estSiren = (v) => /^\d{9}$/.test(String(v ?? ''));
 const aujourdhui = () => new Date().toLocaleDateString('fr-FR');
@@ -73,14 +74,8 @@ function infosOuverture({ type_operation, delai_audit_jours, date_signature_prev
   return { valeurs: { type, delai, date } };
 }
 
-// Échéance de l'audit = date d'ouverture + délai retenu. Calculée, jamais
-// stockée : elle suit le délai si on le corrige.
-function echeanceAudit(ouvert_le, delai) {
-  if (!ouvert_le || !delai) return null;
-  const d = new Date(ouvert_le);
-  d.setDate(d.getDate() + Number(delai));
-  return d.toISOString().slice(0, 10);
-}
+// Échéance de l'audit et alertes de délai : lib/delais.js (partagé avec
+// la note de réunion).
 
 // La colonne `date` revient du pilote en objet Date (minuit UTC) : on la
 // rend en AAAA-MM-JJ pour que la façade n'ait pas à deviner le fuseau.
@@ -503,6 +498,11 @@ async function lister(res, { clos = false } = {}) {
     type_operation: l.type_operation ?? null,
     delai_audit_jours: l.delai_audit_jours ?? null,
     echeance_audit: echeanceAudit(l.ouvert_le, l.delai_audit_jours),
+    // 09/11/2026 — alertes de délai (15 jours, 48 heures, dépassée), sur
+    // les seuls dossiers en cours.
+    alerte_delai: l.clos_le ? null : alerteDelai({
+      ouvert_le: l.ouvert_le, delai_audit_jours: l.delai_audit_jours, reserves_ouvertes: l.reserves_ouvertes,
+    }),
     date_signature_prevue: jourIso(l.date_signature_prevue),
     parcelles: l.parcelles,
     parcelles_auditee: l.parcelles_auditee,
@@ -644,6 +644,9 @@ async function lire(res, ref) {
       type_operation: d.type_operation ?? null,
       delai_audit_jours: d.delai_audit_jours ?? null,
       echeance_audit: echeanceAudit(d.ouvert_le, d.delai_audit_jours),
+      alerte_delai: d.clos_le ? null : alerteDelai({
+        ouvert_le: d.ouvert_le, delai_audit_jours: d.delai_audit_jours, reserves_ouvertes: ouvertes,
+      }),
       date_signature_prevue: jourIso(d.date_signature_prevue),
       // Deux états, pas plus : provisoire tant qu'une réserve est ouverte.
       etat: ouvertes ? 'provisoire' : 'definitif_possible',
