@@ -521,6 +521,19 @@ export default async function handler(req, res) {
         if (rouge.length) poser('env_zone_rouge', { precision: lister(rouge) });
         if (ppr.length) poser('env_ppr', { precision: lister(ppr) });
         if (sols.length) poser('env_sols_concerne', { precision: lister(sols) });
+        // 09/11/2026 — confrontation Géoportail de l'urbanisme / bases
+        // interrogées en direct, rendue par RISQUES parcelle par parcelle
+        // (règle de JFD : divergence → orange, les deux versions dites).
+        // Un rapport antérieur au 09/11 n'a pas ces champs : rien n'est dit.
+        {
+          // Commune sans document publié : rien à comparer, sans alerte ; la
+          // famille 6 le dit déjà, parcelle par parcelle (relevé d'URBA).
+          const ecartsGpu = [];
+          for (const b of biensRq) {
+            for (const e of b.ecarts_gpu || []) ecartsGpu.push(nomBien(b) + ', parcelle ' + e.ref + ', ' + e.sujet + ' : Géoportail — ' + e.geoportail + ' ; ' + e.direct);
+          }
+          if (ecartsGpu.length) poser('env_gpu_divergence', { precision: lister(ecartsGpu) });
+        }
         if (muettes.size || introuvables.length) {
           const manque = [];
           if (muettes.size) manque.push('rubriques non renseignées : ' + [...muettes].join(', '));
