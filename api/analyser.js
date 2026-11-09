@@ -18,7 +18,7 @@
 //     jaune et jamais plus ;
 //   • tout le reste ouvre en jaune, chacun avec son motif d'attente.
 // Le reste s'allumera source par source, au fur et à mesure des
-// branchements (RISQUES, ADEME, Sitadel, TRENTE…).
+// branchements (RISQUES, XYLO, URBA, ADEME, Sitadel, TRENTE…).
 //
 // ---------------------------------------------------------------------
 // VENTILATION PAR SOCIÉTÉ — correction du 11/09/2026
@@ -51,6 +51,8 @@ import { sousFamille, voyantsAlimentesPar, cheminDrive } from '../lib/nomenclatu
 
 const aujourdhui = () => new Date().toLocaleDateString('fr-FR');
 const XYLO = process.env.XYLO_BASE || 'https://xylo-phi.vercel.app';
+const URBA = process.env.URBA_BASE || 'https://urba-lemon.vercel.app';
+const URBA_MAX = 40;   // même plafond que la porte d'URBA
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ erreur: 'POST attendu' });
@@ -211,268 +213,40 @@ export default async function handler(req, res) {
     // 6. urbanisme — trois volets en attente ; assurance sans travaux connus.
     { const le = envoyeLe("Liste des autorisations d'urbanisme délivrées");
       if (le) poser('urba_attente', { date: le }); else poser('urba_a_solliciter'); }
-    poser('zone_attente');
-    // Pas `assurance_attente` : elle affirmerait des travaux relevés,
-    // alors qu'aucune source d'autorisations n'est encore lue.
-    poser('assurance_non_verifie', {
-      raison: "le recensement des autorisations d'urbanisme n'est pas encore raccordé à MARTEAU",
-    });
-
-    // 7. diagnostics — arrêtés termites et mérule lus dans XYLO (règle
-    // validée par JFD le 09/11/2026). XYLO est interrogé EN DIRECT à chaque
-    // analyse (arbitrage d'août : actualiser = tout recollecter). Le statut
-    // est communal : un appel pour toutes les communes de la société
-    // auditée. Un arrêté crée une OBLIGATION DE DIAGNOSTIC, pas une
-    // difficulté : il alimente la liste des diagnostics attendus, le voyant
-    // reste jaune et passe au canard à réception du dossier de diagnostics.
-    // Zonage partiel ou XYLO injoignable : la phrase le dit. ADEME (DPE)
-    // n'est pas encore branchée.
+    // Organisation de la zone — lue dans URBA (règle validée par JFD le
+    // 09/11/2026), interrogé EN DIRECT comme XYLO. Parcelle par parcelle :
+    //   - zonage relevé : jaune, zone + document + date d'approbation,
+    //     conformité à vérifier au titre ;
+    //   - périmètre de zone d'aménagement concerté : orange (zone_cahier)
+    //     jusqu'à réception du cahier des charges ;
+    //   - servitudes d'utilité publique : listées, jaune, jamais d'orange
+    //     automatique ;
+    //   - règlement national d'urbanisme ou base injoignable : dit ;
+    //   - lotissement : inconnu du Géoportail, demande à la commune maintenue.
+    // URBA ne lit pas Sitadel : `autorisations` et `assurance` restent en
+    // attente. Le nom de l'outil n'apparaît dans aucune phrase.
     {
-      const communes = await sql`
-        SELECT commune_insee AS insee, max(commune_nom) AS nom
-          FROM marteau_parcelle
+      const lesParcelles = await sql`
+        SELECT code_parcelle, commune_nom FROM marteau_parcelle
          WHERE dossier_id = ${d.id} AND en_perimetre AND siren_proprietaire = ${d.siren_tete}
-         GROUP BY commune_insee ORDER BY commune_insee
+         ORDER BY commune_nom, code_parcelle LIMIT ${URBA_MAX}::int
       `;
-      const nomC = (c) => (c.nom ? c.nom + ' (' + c.insee + ')' : c.insee);
-      const liste = [];
-      if (communes.length) {
-        let xy = null;
+      let ur = null;
+      if (lesParcelles.length) {
         try {
           const ctl = new AbortController();
-          const minuterie = setTimeout(() => ctl.abort(), 8000);
-          const r = await fetch(XYLO + '/api/situation', {
+          const minuterie = setTimeout(() => ctl.abort(), 45000);
+          const r = await fetch(URBA + '/api/urbanisme', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ insee: communes.map((c) => c.insee) }),
+            body: JSON.stringify({ parcelles: lesParcelles.map((x) => x.code_parcelle) }),
             signal: ctl.signal,
           });
           clearTimeout(minuterie);
-          if (r.ok) xy = await r.json();
-        } catch (e) { console.error('[MARTEAU] XYLO injoignable :', e.message); }
-
-        if (!xy || !xy.communes) {
-          liste.push("situation au regard des arrêtés termites et mérule NON VÉRIFIÉE (la base des arrêtés préfectoraux n'a pas répondu, relancer l'analyse)");
-        } else {
-          const termites = [], merule = [], partiel = [], aucun = [];
-          for (const c of communes) {
-            const s = xy.communes[c.insee] || {};
-            const date = (b) => (b && (b.date_arrete || b.date_effet))
-              ? ' — arrêté du ' + new Date(b.date_arrete || b.date_effet).toLocaleDateString('fr-FR') : '';
-            let vise = false;
-            for (const [cle, tab] of [['termite', termites], ['merule', merule]]) {
-              const b = s[cle];
-              if (!b) continue;
-              if (b.statut === 'zonage' || b.statut === 'partiel' || b.statut === 'verifier') {
-                partiel.push(nomC(c) + ' (' + (cle === 'termite' ? 'termites' : 'mérule') + ')'); vise = true;
-              } else if (b.classe) { tab.push(nomC(c) + date(b)); vise = true; }
-            }
-            if (!vise) aucun.push(nomC(c));
-          }
-          const court = (t) => t.slice(0, 6).join(' ; ') + (t.length > 6 ? ` ; et ${t.length - 6} autre(s) commune(s)` : '');
-          if (termites.length) liste.push('état relatif à la présence de termites (' + court(termites) + ')');
-          if (merule.length) liste.push("information de l'acquéreur sur le risque de mérule (" + court(merule) + ')');
-          if (partiel.length) liste.push('situation à vérifier sur l\'annexe de l\'arrêté, zonage partiel de la commune (' + court(partiel) + ')');
-          if (aucun.length) liste.push('aucun arrêté termites ni mérule, vérifié sur la base des arrêtés préfectoraux le ' + aujourdhui() + ' (' + court(aucun) + ')');
-        }
+          if (r.ok) ur = await r.json();
+        } catch (e) { console.error('[MARTEAU] URBA injoignable :', e.message); }
       }
-      liste.push("autres diagnostics : liste calculée à venir selon l'usage du bien");
-      poser('diag_liste', { liste: liste.join(' ; ') });
-    }
-
-    // 8. environnement — lecture du rapport de RISQUES (grille validée par
-    // JFD le 08/11/2026). MARTEAU commande le rapport depuis la page du
-    // dossier ; il en garde la réponse finale dans `marteau_dossier.risques`,
-    // dont `biens[].rubriques[]` (statut de chacune des quinze rubriques).
-    //   - pas de rapport, en cours, en échec, ou rapport antérieur au
-    //     08/11 (sans rubriques) : jaune, la raison est dite ;
-    //   - PPR approuvé (rubriques 1 à 3) au niveau maximal : carmin ;
-    //   - PPR approuvé, autre zone : orange ;
-    //   - sites et sols pollués « concerné » : orange ;
-    //   - une base muette : jaune « partielles » ;
-    //   - le reste (sismicité, radon, argiles, bruit…) relève de
-    //     l'information de l'acquéreur : jaune, état du client attendu.
-    {
-      const rq = d.risques || null;
-      const biensRq = rq && Array.isArray(rq.biens) ? rq.biens : [];
-      if (!rq || !rq.statut) {
-        poser('env_non_verifie', { raison: "le rapport de risques du portefeuille n'a pas encore été commandé à RISQUES" });
-      } else if (rq.statut === 'en_cours') {
-        poser('env_non_verifie', { raison: 'le rapport de risques du portefeuille est en cours de production par RISQUES' });
-      } else if (rq.statut !== 'termine') {
-        poser('env_non_verifie', { raison: "le rapport de risques du portefeuille commandé à RISQUES n'a pas abouti et doit être commandé de nouveau" });
-      } else if (!biensRq.length) {
-        poser('env_non_verifie', { raison: 'le rapport de risques du portefeuille est à actualiser pour que ses résultats soient repris ici' });
-      } else {
-        const nomBien = (b) => 'groupe ' + b.numero + (b.refs && b.refs.length ? ' (' + b.refs.slice(0, 3).join(', ') + (b.refs.length > 3 ? '…' : '') + ')' : '');
-        const lister = (items) => items.slice(0, 5).join(' ; ') + (items.length > 5 ? ` ; et ${items.length - 5} autre(s) bien(s)` : '');
-        const PPR = ['pprt', 'pprn', 'pprm'];
-        const rouge = [], ppr = [], sols = [], muettes = new Set(), introuvables = [];
-        for (const b of biensRq) {
-          if (b.introuvable) introuvables.push(nomBien(b));
-          for (const r of b.rubriques || []) {
-            if (r.statut === 'non_obtenu') muettes.add(r.intitule);
-            if (r.statut !== 'concerne') continue;
-            const texte = nomBien(b) + ' : ' + String(r.phrase || r.intitule || '').replace(/\.$/, '');
-            if (PPR.includes(r.cle)) (r.maximal ? rouge : ppr).push(texte);
-            else if (r.cle === 'sis') sols.push(texte);
-          }
-        }
-        if (rouge.length) poser('env_zone_rouge', { precision: lister(rouge) });
-        if (ppr.length) poser('env_ppr', { precision: lister(ppr) });
-        if (sols.length) poser('env_sols_concerne', { precision: lister(sols) });
-        if (muettes.size || introuvables.length) {
-          const manque = [];
-          if (muettes.size) manque.push('rubriques non renseignées : ' + [...muettes].join(', '));
-          if (introuvables.length) manque.push('biens non traités : ' + lister(introuvables));
-          poser('env_partiel', { precision: manque.join(' ; ') });
-        } else {
-          poser('env_attente_client');
-        }
-      }
-    }
-
-    // 9. exploitation et contrats
-    poser('exploit_attente');
-    poser('contrats_attente');
-
-    // 10. fiscalité
-    poser('fisc_actif_attente');
-    poser('fisc_cession_attente');
-
-    // Écriture. On repose tout : les voyants sont un CALCUL, pas une trace.
-    await sql`DELETE FROM marteau_voyant WHERE dossier_id = ${d.id}`;
-    const parCouleur = { canard: 0, jaune: 0, orange: 0, carmin: 0 };
-    for (const v of voyants) {
-      const p = PHRASES[v.code];
-      // Un code de phrase inconnu ne doit pas faire tomber toute
-      // l'analyse : on le compte à part et on continue.
-      if (!p) { console.error('[MARTEAU] bloc de phrase inconnu :', v.code); continue; }
-      const rid = refId(p.famille, p.voyant);
-      if (!rid) continue;
-      await sql`
-        INSERT INTO marteau_voyant (dossier_id, voyant_ref_id, couleur, phrase_code, precisions)
-        VALUES (${d.id}, ${rid}, ${p.couleur}, ${v.code}, ${JSON.stringify(v.precisions)}::jsonb)
-      `;
-      parCouleur[p.couleur] += 1;
-    }
-
-    // ---------------------------------------------------- registre des pièces
-    // Chaque jaune attend une pièce précise : le registre les liste comme
-    // DEMANDABLES (mémo § 9 — « toutes les pièces demandées ET toutes celles
-    // qui sont demandables »). On ne touche pas aux lignes déjà demandées ou
-    // reçues ; on repose seulement les demandables, qui sont un calcul.
-    //
-    // Le K-bis n'y est pas : il est demandé par l'étude elle-même, jamais
-    // au client (arbitrage 07/09). L'état hypothécaire a son cycle propre
-    // (à saisir → saisie → reçu → analysé), il est saisi au logiciel métier.
-    //
-    // Chaque pièce porte MAINTENANT son code documentaire : c'est lui qui
-    // donne le sous-dossier Drive et le nom de fichier attendu. Les deux
-    // colonnes sont indépendantes — `famille` est l'axe d'ANALYSE (quel
-    // voyant bouge), `code_doc` l'axe DOCUMENTAIRE (où le fichier vit).
-    // Ne JAMAIS déduire l'un de l'autre : les familles 2 et 3 sont
-    // inversées entre les deux axes (mémo v5 § 21).
-    const PIECES = [
-      // famille, nature, libellé, destinataire, code documentaire
-      [2,  'piece', 'Titre de propriété',                                        'client',              '021'],
-      [4,  'piece', 'Règlement de copropriété et état descriptif de division',   'client',              '042'],
-      [4,  'piece', 'Procès-verbaux d\'assemblée générale (3 derniers exercices)', 'client',              '042'],
-      [5,  'etat_hypothecaire', 'État hypothécaire',                             'publicite_fonciere',  '051'],
-      [5,  'piece', 'Copie des actes de prêt en cours et de leurs garanties',    'client',              '053'],
-      [6,  'piece', 'Liste des autorisations d\'urbanisme délivrées',             'mairie',              '062'],
-      [6,  'piece', 'Attestations dommages-ouvrage et décennale (travaux < 10 ans)', 'client',          '095'],
-      [7,  'piece', 'Dossier de diagnostics techniques',                         'client',              '071'],
-      [8,  'piece', 'État des risques et pollutions',                            'client',              '081'],
-      // Le libellé couvre commerciaux ET habitation (091 et 092). Rangé en
-      // 091 par défaut : le portefeuille audité est commercial dans la
-      // quasi-totalité des cas. À scinder en deux pièces si un dossier
-      // porte de l'habitation — signalé par verifierRangement().
-      [9,  'piece', 'Baux en cours et état locatif',                             'client',              '091'],
-      [9,  'piece', 'Contrats attachés à l\'immeuble (gestion, entretien, énergie)', 'client',          '094'],
-      // ÉCART CONNU, en attente d'arbitrage JFD : la 023 (titres
-      // d'occupation dont la société est bénéficiaire) alimente
-      // `nature_droit`, qui est en famille d'analyse 5 — pas 9. Une AOT du
-      // domaine public est consentie À la société, elle relève donc du
-      // droit détenu. La famille reste à 9 tant que ce n'est pas tranché,
-      // et verifierRangement() le signale au lieu de le taire.
-      [9,  'piece', 'Autorisations d\'occupation du domaine public',              'client',              '023'],
-      [10, 'piece', 'Acte d\'acquisition, tableau des immobilisations, factures de travaux, détail du compte 2013', 'expert_comptable', '101'],
-    ];
-
-    // Contrôle de rangement : la famille d'analyse déclarée doit figurer
-    // parmi celles des voyants que le code documentaire alimente. Un
-    // écart n'est pas bloquant — il est RENDU, comme le recoupement de
-    // /api/sante, parce qu'un mauvais rangement est un défaut silencieux :
-    // la pièce arrive, elle est simplement classée là où personne ne la
-    // cherchera.
-    const verifierRangement = () => {
-      const ecarts = [];
-      for (const [fam, , libelle, , code] of PIECES) {
-        const sf = sousFamille(code);
-        if (!sf) {
-          ecarts.push(`« ${libelle} » : code documentaire ${code} inconnu`);
-          continue;
-        }
-        const familles = voyantsAlimentesPar(code).map((v) => v.famille);
-        if (!familles.includes(fam)) {
-          ecarts.push(
-            `« ${libelle} » : rangée en ${code} (${sf.libelle}), qui alimente `
-            + `la famille ${familles.join(' et ') || 'aucune'}, mais déclarée en famille ${fam}`,
-          );
-        }
-      }
-      return ecarts;
-    };
-    const ecartsRangement = verifierRangement();
-    await sql`DELETE FROM marteau_piece WHERE dossier_id = ${d.id} AND statut IN ('demandable', 'a_saisir')`;
-    const dejaLibelles = (await sql`SELECT libelle FROM marteau_piece WHERE dossier_id = ${d.id}`).map((r) => r.libelle);
-    let demandables = 0;
-    for (const [fam, nature, libelle, dest, code] of PIECES) {
-      if (dejaLibelles.includes(libelle)) continue;
-      await sql`
-        INSERT INTO marteau_piece (dossier_id, famille, libelle, nature, destinataire_type, statut, code_doc)
-        VALUES (${d.id}, ${fam}, ${libelle}, ${nature}, ${dest},
-                ${nature === 'etat_hypothecaire' ? 'a_saisir' : 'demandable'}, ${code})
-      `;
-      demandables += 1;
-    }
-
-    await journaliser(d.id, String(qui).trim().toUpperCase(), 'analyse calculée', {
-      pieces_demandables: demandables,
-      voyants: voyants.length, ...parCouleur,
-      // La ventilation part au journal : un audit doit pouvoir dire, après
-      // coup, sur quel périmètre il a été établi.
-      parcelles: { auditee: parc.total, autres: parc.autres },
-    });
-    const [{ tete: empreinte }] = await sql`SELECT marteau_journal_tete() AS tete`;
-
-    // Le rangement attendu, DÉDUIT du code — jamais stocké, sinon il y
-    // aurait deux vérités à maintenir. C'est ce que l'écran affiche à côté
-    // de chaque pièce et ce que le mail de demande rappellera.
-    const rangement = PIECES.map(([, , libelle, , code]) => ({
-      libelle, code, sous_famille: sousFamille(code)?.libelle ?? null,
-      chemin: cheminDrive(code),
-    }));
-
-    return res.status(200).json({
-      dossier: d.reference,
-      voyants: voyants.length,
-      ...parCouleur,
-      parcelles: {
-        auditee: parc.total,
-        autres: parc.autres,
-        detail: autresSocietes.map((s) => ({
-          siren: s.siren, denomination: s.denomination ?? null,
-          parcelles: s.parcelles, contenance: Number(s.contenance),
-        })),
-      },
-      rangement,
-      ...(ecartsRangement.length ? { anomalies_rangement: ecartsRangement } : {}),
-      journal_tete: empreinte,
-    });
-  } catch (e) {
-    console.error('[MARTEAU] analyser', e);
-    return res.status(500).json({ erreur: e.message });
-  }
-}
+      if (!lesParcelles.length) {
+        poser('zone_attente');
+      } else if (!ur || !ur.parcelles) {
+        poser('zone_non_verifie', { raison: "le Géoportail de l'urbanisme n'a pas
