@@ -69,7 +69,8 @@ function tablePieces(liste) {
   for (const s of d.dossiers) {
     h += '<section class="dossier"><h2>' + e(s.reference) + ' — ' + e(s.denomination || s.siren) + '</h2>'
       + '<div class="sous">Associé ' + e(s.associe) + (s.collaborateur ? ' · collaborateur ' + e(s.collaborateur) : '') + ' · ' + s.points + ' point(s)</div>';
-    for (const a of s.alertes) h += '<div class="alerte"><b>' + e(a.libelle) + '</b> — ' + e(a.motif) + '</div>';
+    // 09/11/2026 : l'alerte de délai à quinze jours est orange, les autres carmin.
+    for (const a of s.alertes) h += '<div class="alerte"' + (a.couleur === 'orange' ? ' style="background:#FFF4E8;border-left-color:var(--orange)"' : '') + '><b>' + e(a.libelle) + '</b> — ' + e(a.motif) + '</div>';
     h += '<h3>En attente depuis plus de 15 jours</h3>' + tablePieces(s.plus_15);
     h += '<h3>En attente depuis moins de 15 jours</h3>' + tablePieces(s.moins_15);
     h += '<h3>Réserves levées depuis le dernier point</h3>';
