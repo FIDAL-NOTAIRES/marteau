@@ -1119,6 +1119,25 @@ async function afficherEtat(ref) {
     + ' · <b>' + (d.dossier.etat === 'provisoire' ? 'provisoire' : 'définitif possible') + '</b>'
     + '<br>' + infosOuvertureTexte(d.dossier) + '</div>';
 
+  // 09/11/2026 — bloc « Informations d'ouverture » : corriger le type
+  // d'opération, le délai d'audit ou la date de signature prévue SANS
+  // relancer la collecte. Chaque changement est journalisé côté serveur.
+  // Masqué sur un dossier clos (le serveur refuse de toute façon).
+  if (!d.dossier.clos_le) {
+    const dd = d.dossier;
+    const opt = (v, lib, cur) => '<option value="' + v + '"' + (String(cur ?? '') === String(v) ? ' selected' : '') + '>' + lib + '</option>';
+    h += '<div class="rang" id="sec-infos" style="margin:-4px 0 12px">'
+      + '<div style="flex:0 0 240px"><label for="io-type">Type d’opération</label><select id="io-type">'
+      + opt('', '— choisir —', dd.type_operation) + opt('vente_immeuble', 'Vente de l’immeuble', dd.type_operation) + opt('cession_parts', 'Cession de parts', dd.type_operation)
+      + '</select></div>'
+      + '<div style="flex:0 0 150px"><label for="io-delai">Délai d’audit</label><select id="io-delai">'
+      + opt('', '— jours —', dd.delai_audit_jours) + [10, 20, 30, 60, 90, 120, 180].map((j) => opt(j, j + ' jours', dd.delai_audit_jours)).join('')
+      + '</select></div>'
+      + '<div style="flex:0 0 190px"><label for="io-date">Signature prévue</label><input type="date" id="io-date" value="' + e(dd.date_signature_prevue || '') + '"></div>'
+      + '<div style="flex:0 0 auto"><button class="sec" id="io-enreg">Enregistrer ces informations</button></div>'
+      + '<div style="flex:1 1 auto" class="att" id="io-res">Sans nouvelle collecte. Laisser la date vide signifie : pas de date prévue.</div></div>';
+  }
+
   // ACTUALISATION COMPLÈTE (arbitrage JFD du 09/11/2026 : actualiser,
   // c'est tout recollecter). Le bouton enchaîne la collecte (REDPAR,
   // BODACC, registre), HISTO, puis l'analyse, qui interroge XYLO en
@@ -1222,6 +1241,23 @@ async function afficherEtat(ref) {
   const quiDem = () => ($('#collab').value || $('#assoc').value || 'JFD').trim().toUpperCase();
 
   $('#risques-go').addEventListener('click', () => lancerRisques(ref, quiDem()));
+  if ($('#io-enreg')) $('#io-enreg').addEventListener('click', async () => {
+    const b = $('#io-enreg'); b.disabled = true;
+    $('#io-res').textContent = 'Enregistrement…';
+    try {
+      const r = await posterDossier('modifier', {
+        dossier: ref, qui: quiDem(),
+        type_operation: $('#io-type').value || null,
+        delai_audit_jours: $('#io-delai').value ? Number($('#io-delai').value) : null,
+        date_signature_prevue: $('#io-date').value || null,
+      });
+      if (!r.modifie.length) { $('#io-res').textContent = 'Rien n’a changé.'; b.disabled = false; return; }
+      await afficherEtat(ref);
+    } catch (err) {
+      $('#io-res').innerHTML = '<span style="color:#A01040">' + e(err.message) + '</span>';
+      b.disabled = false;
+    }
+  });
   // un travail commandé et non fini (onglet refermé, page rechargée) : on reprend le suivi
   if (d.risques && d.risques.statut === 'en_cours' && d.risques.interroger && !risquesSuivi[ref]) suivreRisques(ref, d.risques, quiDem(), true);
 
