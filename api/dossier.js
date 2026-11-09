@@ -21,7 +21,8 @@
 //   GET  /api/dossier?liste=1&clos=1         → dossiers clos
 //
 //   POST /api/dossier  { action, ... }
-//     ouvrir    { siren, denomination?, associe, collaborateur?, qui }
+//     ouvrir    { siren, denomination?, associe, collaborateur?, qui,
+//                 type_operation, delai_audit_jours, date_signature_prevue? }
 //     lister    { clos? }
 //     lire      { dossier }
 //     lever     { dossier, reserve, motif, qui, code? }
@@ -46,6 +47,42 @@ import { sousFamille, cheminDrive } from '../lib/nomenclature.js';
 const estSiren = (v) => /^\d{9}$/.test(String(v ?? ''));
 const aujourdhui = () => new Date().toLocaleDateString('fr-FR');
 const majuscule = (v) => String(v ?? '').trim().toUpperCase();
+
+// 09/11/2026 — informations d'ouverture (migration 012).
+// Type d'opération : vente de l'immeuble ou cession de parts (arbitrage
+// vocal du 09/11) ; délai d'audit : liste fermée du 09/09 ; date de
+// signature prévue : facultative (09/11).
+const TYPES_OPERATION = ['vente_immeuble', 'cession_parts'];
+const DELAIS_AUDIT = [10, 20, 30, 60, 90, 120, 180];
+const estDateIso = (v) => /^\d{4}-\d{2}-\d{2}$/.test(String(v ?? '')) && !isNaN(Date.parse(v));
+
+// Lit et valide les trois champs. Rend { valeurs } ou { erreur }.
+// `exiger` : vrai à la création d'un dossier, faux à la reprise d'un
+// dossier existant (on ne complète que ce qui est fourni).
+function infosOuverture({ type_operation, delai_audit_jours, date_signature_prevue }, exiger) {
+  const type = type_operation ? String(type_operation) : null;
+  const delai = delai_audit_jours != null && delai_audit_jours !== '' ? Number(delai_audit_jours) : null;
+  const date = date_signature_prevue ? String(date_signature_prevue) : null;
+  if (type && !TYPES_OPERATION.includes(type)) return { erreur: 'type_operation : vente_immeuble ou cession_parts' };
+  if (delai != null && !DELAIS_AUDIT.includes(delai)) return { erreur: 'delai_audit_jours : 10, 20, 30, 60, 90, 120 ou 180' };
+  if (date && !estDateIso(date)) return { erreur: 'date_signature_prevue : date au format AAAA-MM-JJ' };
+  if (exiger && !type) return { erreur: 'type d\u2019opération requis : vente de l\u2019immeuble ou cession de parts' };
+  if (exiger && delai == null) return { erreur: 'délai d\u2019audit requis' };
+  return { valeurs: { type, delai, date } };
+}
+
+// Échéance de l'audit = date d'ouverture + délai retenu. Calculée, jamais
+// stockée : elle suit le délai si on le corrige.
+function echeanceAudit(ouvert_le, delai) {
+  if (!ouvert_le || !delai) return null;
+  const d = new Date(ouvert_le);
+  d.setDate(d.getDate() + Number(delai));
+  return d.toISOString().slice(0, 10);
+}
+
+// La colonne `date` revient du pilote en objet Date (minuit UTC) : on la
+// rend en AAAA-MM-JJ pour que la façade n'ait pas à deviner le fuseau.
+const jourIso = (v) => (v ? (v instanceof Date ? v.toISOString().slice(0, 10) : String(v).slice(0, 10)) : null);
 
 // Gravité croissante. Sert deux fois : la couleur d'une famille est la
 // plus grave de ses voyants, celle d'un dossier la plus grave de ses
@@ -263,7 +300,8 @@ export default async function handler(req, res) {
 // /api/collecter. Si la collecte échoue, le dossier existe quand même —
 // c'est voulu, le rapport doit toujours pouvoir sortir.
 
-async function ouvrir(res, { siren, denomination, associe, collaborateur, qui }) {
+async function ouvrir(res, corps) {
+  const { siren, denomination, associe, collaborateur, qui } = corps;
   if (!estSiren(siren)) return res.status(400).json({ erreur: 'siren requis (9 chiffres)' });
   if (!associe) return res.status(400).json({ erreur: 'associé en charge requis' });
 
@@ -273,13 +311,50 @@ async function ouvrir(res, { siren, denomination, associe, collaborateur, qui })
   // Un dossier déjà ouvert sur ce SIREN et non clos est repris, pas
   // doublé : l'audit relancé repart de l'état précédent (mémo § 4.6).
   const [existant] = await sql`
-    SELECT id, reference FROM marteau_dossier
+    SELECT id, reference, type_operation, delai_audit_jours, date_signature_prevue
+      FROM marteau_dossier
      WHERE siren_tete = ${siren} AND clos_le IS NULL
      ORDER BY ouvert_le DESC LIMIT 1
   `;
   if (existant) {
-    return res.status(200).json({ dossier: existant.reference, repris: true });
+    // 09/11/2026 — à la reprise, les informations d'ouverture fournies
+    // COMPLÈTENT ou CORRIGENT le dossier (c'est ainsi que les dossiers
+    // ouverts avant la migration 012 les reçoivent). Rien n'est exigé,
+    // rien n'est effacé ; tout changement est journalisé.
+    const lu = infosOuverture(corps, false);
+    if (lu.erreur) return res.status(400).json({ erreur: lu.erreur });
+    const { type, delai, date } = lu.valeurs;
+    const avant = {
+      type_operation: existant.type_operation ?? null,
+      delai_audit_jours: existant.delai_audit_jours ?? null,
+      date_signature_prevue: jourIso(existant.date_signature_prevue),
+    };
+    const apres = {
+      type_operation: type ?? avant.type_operation,
+      delai_audit_jours: delai ?? avant.delai_audit_jours,
+      date_signature_prevue: date ?? avant.date_signature_prevue,
+    };
+    const change = Object.keys(apres).filter((k) => apres[k] !== avant[k]);
+    if (change.length) {
+      await sql`
+        UPDATE marteau_dossier
+           SET type_operation = ${apres.type_operation},
+               delai_audit_jours = ${apres.delai_audit_jours}::int,
+               date_signature_prevue = ${apres.date_signature_prevue}::date
+         WHERE id = ${existant.id}
+      `;
+      await journaliser(existant.id, auteur, 'informations d\u2019ouverture modifiées', {
+        champs: change, avant, apres,
+      });
+    }
+    return res.status(200).json({ dossier: existant.reference, repris: true, modifie: change });
   }
+
+  // Création : type d'opération et délai d'audit sont EXIGÉS ; la date de
+  // signature prévue reste facultative.
+  const lu = infosOuverture(corps, true);
+  if (lu.erreur) return res.status(400).json({ erreur: lu.erreur });
+  const { type, delai, date } = lu.valeurs;
 
   // Référence AAAA-NNNN. Le verrou consultatif évite que deux ouvertures
   // simultanées tirent le même numéro ; le volume (~30 audits par mois)
@@ -294,11 +369,13 @@ async function ouvrir(res, { siren, denomination, associe, collaborateur, qui })
         FROM marteau_dossier WHERE reference LIKE ${annee + '-%'}
     )
     INSERT INTO marteau_dossier
-      (reference, siren_tete, denomination_tete, associe_en_charge, collaborateur)
+      (reference, siren_tete, denomination_tete, associe_en_charge, collaborateur,
+       type_operation, delai_audit_jours, date_signature_prevue)
     SELECT ${annee} || '-' || lpad(n.suivant::text, 4, '0'),
            ${siren}, ${denomination ?? null},
            ${majuscule(associe)},
-           ${collaborateur ? majuscule(collaborateur) : null}
+           ${collaborateur ? majuscule(collaborateur) : null},
+           ${type}, ${delai}::int, ${date}::date
       FROM n, v
     RETURNING id, reference
   `;
@@ -312,6 +389,7 @@ async function ouvrir(res, { siren, denomination, associe, collaborateur, qui })
 
   await journaliser(d.id, auteur, 'dossier ouvert', {
     siren, denomination: denomination ?? null, associe: majuscule(associe),
+    type_operation: type, delai_audit_jours: delai, date_signature_prevue: date,
   });
 
   const [{ tete }] = await sql`SELECT marteau_journal_tete() AS tete`;
@@ -336,6 +414,7 @@ async function lister(res, { clos = false } = {}) {
   const lignes = await sql`
     SELECT d.reference, d.siren_tete, d.denomination_tete,
            d.associe_en_charge, d.collaborateur, d.ouvert_le, d.clos_le,
+           d.type_operation, d.delai_audit_jours, d.date_signature_prevue,
            (SELECT count(*) FROM marteau_reserve r
              WHERE r.dossier_id = d.id AND r.levee_le IS NULL)::int AS reserves_ouvertes,
            (SELECT count(*) FROM marteau_reserve r
@@ -382,6 +461,10 @@ async function lister(res, { clos = false } = {}) {
     collaborateur: l.collaborateur,
     ouvert_le: l.ouvert_le,
     clos_le: l.clos_le,
+    type_operation: l.type_operation ?? null,
+    delai_audit_jours: l.delai_audit_jours ?? null,
+    echeance_audit: echeanceAudit(l.ouvert_le, l.delai_audit_jours),
+    date_signature_prevue: jourIso(l.date_signature_prevue),
     parcelles: l.parcelles,
     parcelles_auditee: l.parcelles_auditee,
     parcelles_autres: l.parcelles - l.parcelles_auditee,
@@ -415,7 +498,8 @@ async function lire(res, ref) {
 
   const [d] = await sql`
     SELECT id, reference, siren_tete, denomination_tete, associe_en_charge,
-           collaborateur, ouvert_le, clos_le, risques
+           collaborateur, ouvert_le, clos_le, risques,
+           type_operation, delai_audit_jours, date_signature_prevue
       FROM marteau_dossier WHERE reference = ${ref}
   `;
   if (!d) return res.status(404).json({ erreur: `dossier ${ref} inconnu` });
@@ -517,6 +601,11 @@ async function lire(res, ref) {
       reference: d.reference, siren: d.siren_tete, denomination: d.denomination_tete,
       associe: d.associe_en_charge, collaborateur: d.collaborateur,
       ouvert_le: d.ouvert_le, clos_le: d.clos_le,
+      // 09/11/2026 — informations d'ouverture (migration 012).
+      type_operation: d.type_operation ?? null,
+      delai_audit_jours: d.delai_audit_jours ?? null,
+      echeance_audit: echeanceAudit(d.ouvert_le, d.delai_audit_jours),
+      date_signature_prevue: jourIso(d.date_signature_prevue),
       // Deux états, pas plus : provisoire tant qu'une réserve est ouverte.
       etat: ouvertes ? 'provisoire' : 'definitif_possible',
     },
