@@ -1118,6 +1118,12 @@ async function afficherEtat(ref) {
     + ' · ouvert le ' + new Date(d.dossier.ouvert_le).toLocaleString('fr-FR')
     + ' · <b>' + (d.dossier.etat === 'provisoire' ? 'provisoire' : 'définitif possible') + '</b>'
     + '<br>' + infosOuvertureTexte(d.dossier) + '</div>';
+  // 09/11/2026 — alerte de délai en tête de la page du dossier.
+  if (d.dossier.alerte_delai) {
+    const ad = d.dossier.alerte_delai, orange = ad.couleur === 'orange';
+    h += '<div style="margin:0 0 12px;padding:10px 14px;border-left:4px solid ' + (orange ? '#FF982D' : '#A01040')
+      + ';background:' + (orange ? '#FFF4E8' : '#FCEEF1') + ';color:#0F2238;font-weight:600">⚠ ' + e(ad.texte) + '</div>';
+  }
 
   // 09/11/2026 — bloc « Informations d'ouverture » : corriger le type
   // d'opération, le délai d'audit ou la date de signature prévue SANS
@@ -1395,7 +1401,10 @@ async function chargerListe() {
         + '<div class="nom">' + e(x.denomination || x.siren)
         + '<div class="att">' + e(x.associe) + (x.collaborateur ? ' · ' + e(x.collaborateur) : '')
         + ' · ouvert le ' + new Date(x.ouvert_le).toLocaleDateString('fr-FR')
-        + (x.clos_le ? ' · clos le ' + new Date(x.clos_le).toLocaleDateString('fr-FR') : '') + '</div></div>'
+        + (x.clos_le ? ' · clos le ' + new Date(x.clos_le).toLocaleDateString('fr-FR') : '') + '</div>'
+        // 09/11/2026 — alerte de délai sur la ligne du dossier.
+        + (x.alerte_delai ? '<div style="margin-top:4px;font-weight:600;color:' + (x.alerte_delai.couleur === 'orange' ? '#B25F00' : '#A01040') + '">⚠ ' + e(x.alerte_delai.texte) + '</div>' : '')
+        + '</div>'
         + '<div class="chiffre"><b>' + n(x.parcelles_auditee ?? x.parcelles) + '</b><div>parcelles</div>'
         // Le périmètre contient aussi les parcelles des sociétés liées
         // (descente du 09/09). Un total seul laisserait croire qu'elles
