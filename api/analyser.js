@@ -53,6 +53,8 @@ const aujourdhui = () => new Date().toLocaleDateString('fr-FR');
 const XYLO = process.env.XYLO_BASE || 'https://xylo-phi.vercel.app';
 const URBA = process.env.URBA_BASE || 'https://urba-lemon.vercel.app';
 const URBA_MAX = 40;   // même plafond que la porte d'URBA
+const TRAVAUX = process.env.TRAVAUX_BASE || 'https://travaux-two.vercel.app';
+const TRAVAUX_MAX = 20; // même plafond que la porte de TRAVAUX
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ erreur: 'POST attendu' });
@@ -210,7 +212,27 @@ export default async function handler(req, res) {
       poser('nature_droit_canard');
     }
 
-    // 6. urbanisme — trois volets en attente ; assurance sans travaux connus.
+    // 6. urbanisme. TRAVAUX est lancé AVANT URBA et attendu après : les
+    // deux interrogations courent en même temps, l'analyse tient en 60 s.
+    const parcTravaux = await sql`
+      SELECT code_parcelle, commune_nom FROM marteau_parcelle
+       WHERE dossier_id = ${d.id} AND en_perimetre AND siren_proprietaire = ${d.siren_tete}
+       ORDER BY commune_nom, code_parcelle LIMIT ${TRAVAUX_MAX}::int
+    `;
+    const promesseTravaux = !parcTravaux.length ? Promise.resolve(null) : (async () => {
+      try {
+        const ctl = new AbortController();
+        const minuterie = setTimeout(() => ctl.abort(), 40000);
+        const r = await fetch(TRAVAUX + '/api/autorisations', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ parcelles: parcTravaux.map((x) => x.code_parcelle) }),
+          signal: ctl.signal,
+        });
+        clearTimeout(minuterie);
+        return r.ok ? await r.json() : null;
+      } catch (e) { console.error('[MARTEAU] TRAVAUX injoignable :', e.message); return null; }
+    })();
     { const le = envoyeLe("Liste des autorisations d'urbanisme délivrées");
       if (le) poser('urba_attente', { date: le }); else poser('urba_a_solliciter'); }
     // Organisation de la zone — lue dans URBA (règle validée par JFD le
@@ -301,11 +323,89 @@ export default async function handler(req, res) {
         }
       }
     }
-    // Pas `assurance_attente` : elle affirmerait des travaux relevés,
-    // alors qu'aucune source d'autorisations n'est encore lue.
-    poser('assurance_non_verifie', {
-      raison: "le recensement des autorisations d'urbanisme délivrées n'a pas encore été obtenu",
-    });
+    // Autorisations et bâti — lus dans TRAVAUX (règles validées par JFD le
+    // 09/11/2026). Parcelle par parcelle :
+    //   - autorisations trouvées dans Sitadel : jaune, listées ; achèvement
+    //     et conformité demandés au client et à la commune ;
+    //   - bâti sans autorisation relevée : jaune, autorisations antérieures
+    //     demandées à la commune ; si le bâtiment est « apparu » à la BD TOPO
+    //     après 2013, on le dit, antériorité à vérifier — JAMAIS d'orange sur
+    //     cette date, qui n'est pas une date de construction (arbitrage B) ;
+    //   - emprise IGN au-delà de 5 % de l'emprise cadastrale : orange ;
+    //   - base injoignable : dit, l'analyse continue.
+    // L'assurance n'est plus « non recherchée » dès que Sitadel a répondu.
+    {
+      const tr = await promesseTravaux;
+      const libP = (code, nom) => {
+        const lib = String(code).replace(/^[0-9AB]\d{4}\d{3}/, '')
+          .replace(/^([A-Z0-9]{2})0*(\d+)$/, (x, sec, num) => `${sec.replace(/^0(?=[A-Z])/, '')} ${num}`).trim();
+        return (nom ? nom + ' ' : '') + lib;
+      };
+      const dFr = (iso) => (iso && /^\d{4}-\d{2}-\d{2}/.test(iso) ? `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)}` : null);
+      const TYPE = { PC: 'permis de construire', DP: 'déclaration préalable', PA: "permis d'aménager", PD: 'permis de démolir' };
+      const ilYaDixAns = new Date(); ilYaDixAns.setFullYear(ilYaDixAns.getFullYear() - 10);
+      const dixAns = ilYaDixAns.toISOString().slice(0, 10);
+      if (!parcTravaux.length) {
+        poser('assurance_non_verifie', { raison: "aucune parcelle au nom de la société n'est encore connue" });
+      } else if (!tr || !tr.parcelles) {
+        poser('urba_releve_impossible', { raison: "la base Sitadel n'a pas répondu, actualiser le dossier" });
+        poser('assurance_non_verifie', { raison: "la base des autorisations d'urbanisme n'a pas répondu" });
+      } else {
+        const listes = [], sansAutor = [], ecarts = [], echecs = [], partiels = [];
+        let recente = false, sitadelOk = 0;
+        for (const x of parcTravaux) {
+          const t = tr.parcelles[x.code_parcelle];
+          const nom = libP(x.code_parcelle, x.commune_nom);
+          if (!t || t.statut !== 'ok') { echecs.push(nom); continue; }
+          sitadelOk++;
+          if ((t.sitadel_partiel || []).length) partiels.push(nom);
+          const autor = (t.autorisations || []).filter((a) => a.etat !== 'annulé');
+          if (autor.length) {
+            listes.push(nom + ' : ' + autor.slice(0, 6).map((a) => {
+              let s2 = (TYPE[a.type] || 'autorisation') + (a.numero ? ' n° ' + a.numero : '');
+              const quoi = [a.nature, a.famille && a.famille !== 'logements' && a.famille !== 'locaux' ? null : a.famille].filter(Boolean);
+              if (quoi.length) s2 += ' (' + quoi.join(', ') + ')';
+              if (a.autorise_le) s2 += ', délivré le ' + dFr(a.autorise_le);
+              s2 += a.achevement_declare ? ', achèvement déclaré le ' + dFr(a.achevement_declare) : ', achèvement non déclaré à la base';
+              return s2;
+            }).join(' ; ') + (autor.length > 6 ? ` ; et ${autor.length - 6} autre(s)` : ''));
+            if (autor.some((a) => a.autorise_le && a.autorise_le >= dixAns)) recente = true;
+          }
+          const e = t.emprises;
+          if (e && !e.erreur) {
+            if (e.ecart_significatif) {
+              ecarts.push(nom + ' : ' + e.ign_m2 + ' m² relevés par l\'IGN contre ' + e.cadastre_m2 + ' m² au plan cadastral');
+            }
+            if (e.bati) {
+              const tardifs = (e.batiments || []).filter((b) => b.apparition_ign && b.apparition_ign.slice(0, 4) > '2013'
+                && !autor.some((a) => a.autorise_le && a.autorise_le.slice(0, 4) <= b.apparition_ign.slice(0, 4)));
+              if (!autor.length || tardifs.length) {
+                let t2 = nom;
+                if (tardifs.length) t2 += ' : ' + tardifs.slice(0, 3).map((b) => `bâtiment de ${b.aire_m2} m² apparu dans la base de l'IGN en ${b.apparition_ign.slice(0, 4)}, sans permis correspondant, antériorité à vérifier`).join(' ; ');
+                else t2 += ' : construction existante sans autorisation relevée depuis 2013';
+                sansAutor.push(t2);
+              }
+            }
+          }
+        }
+        const court = (arr) => arr.slice(0, 8).join(' ; ') + (arr.length > 8 ? ` ; et ${arr.length - 8} autre(s) parcelle(s)` : '');
+        const reste = parc.total - parcTravaux.length;
+        const suffixe = (echecs.length ? ' ; non relevé : ' + echecs.slice(0, 5).join(', ') : '')
+          + (partiels.length ? ' ; relevé partiel (une partie de la base n\'a pas répondu) : ' + partiels.slice(0, 5).join(', ') : '')
+          + (reste > 0 ? ` ; relevé limité aux ${parcTravaux.length} premières parcelles, ${reste} restant à examiner` : '');
+        if (!sitadelOk) {
+          poser('urba_releve_impossible', { raison: "aucune parcelle n'a pu être interrogée sur la base Sitadel (" + echecs.slice(0, 5).join(' ; ') + ')' });
+          poser('assurance_non_verifie', { raison: "la base des autorisations d'urbanisme n'a pas répondu" });
+        } else {
+          if (listes.length) poser('urba_releve', { date: aujourdhui(), detail: court(listes) + suffixe });
+          else poser('urba_aucune', { date: aujourdhui(), suite: suffixe });
+          if (sansAutor.length) poser('urba_sans_autorisation', { detail: court(sansAutor) });
+          if (ecarts.length) poser('urba_emprise_ecart', { detail: court(ecarts) });
+          if (recente) poser('assurance_attente');
+          else poser('assurance_aucun_releve', { date: aujourdhui() });
+        }
+      }
+    }
 
     // 7. diagnostics — arrêtés termites et mérule lus dans XYLO (règle
     // validée par JFD le 09/11/2026). XYLO est interrogé EN DIRECT à chaque
