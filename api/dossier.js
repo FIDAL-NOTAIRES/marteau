@@ -635,6 +635,14 @@ async function lire(res, ref) {
      ORDER BY dernier_essai DESC LIMIT 10
   `;
 
+  // 09/11/2026 — date de la dernière actualisation : la dernière « analyse
+  // calculée » portée au journal (c'est l'étape finale du bouton
+  // « Actualiser le dossier »). Sert à colorer le bouton (deux heures).
+  const [{ derniere_actualisation }] = await sql`
+    SELECT max(le) AS derniere_actualisation
+      FROM marteau_journal WHERE dossier_id = ${d.id} AND quoi = 'analyse calculée'
+  `;
+
   return res.status(200).json({
     dossier: {
       reference: d.reference, siren: d.siren_tete, denomination: d.denomination_tete,
@@ -648,6 +656,7 @@ async function lire(res, ref) {
         ouvert_le: d.ouvert_le, delai_audit_jours: d.delai_audit_jours, reserves_ouvertes: ouvertes,
       }),
       date_signature_prevue: jourIso(d.date_signature_prevue),
+      derniere_actualisation: derniere_actualisation || null,
       // Deux états, pas plus : provisoire tant qu'une réserve est ouverte.
       etat: ouvertes ? 'provisoire' : 'definitif_possible',
     },
