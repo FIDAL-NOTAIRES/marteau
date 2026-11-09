@@ -50,6 +50,7 @@ import { PHRASES } from '../lib/phrases.js';
 import { sousFamille, voyantsAlimentesPar, cheminDrive } from '../lib/nomenclature.js';
 
 const aujourdhui = () => new Date().toLocaleDateString('fr-FR');
+const XYLO = process.env.XYLO_BASE || 'https://xylo-phi.vercel.app';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ erreur: 'POST attendu' });
@@ -217,8 +218,67 @@ export default async function handler(req, res) {
       raison: "le recensement des autorisations d'urbanisme n'est pas encore raccordé à MARTEAU",
     });
 
-    // 7. diagnostics — ADEME non encore branchée : on le dit.
-    poser('diag_liste', { liste: 'liste calculée à venir — usage et arrêtés préfectoraux à déterminer' });
+    // 7. diagnostics — arrêtés termites et mérule lus dans XYLO (règle
+    // validée par JFD le 09/11/2026). XYLO est interrogé EN DIRECT à chaque
+    // analyse (arbitrage d'août : actualiser = tout recollecter). Le statut
+    // est communal : un appel pour toutes les communes de la société
+    // auditée. Un arrêté crée une OBLIGATION DE DIAGNOSTIC, pas une
+    // difficulté : il alimente la liste des diagnostics attendus, le voyant
+    // reste jaune et passe au canard à réception du dossier de diagnostics.
+    // Zonage partiel ou XYLO injoignable : la phrase le dit. ADEME (DPE)
+    // n'est pas encore branchée.
+    {
+      const communes = await sql`
+        SELECT commune_insee AS insee, max(commune_nom) AS nom
+          FROM marteau_parcelle
+         WHERE dossier_id = ${d.id} AND en_perimetre AND siren_proprietaire = ${d.siren_tete}
+         GROUP BY commune_insee ORDER BY commune_insee
+      `;
+      const nomC = (c) => (c.nom ? c.nom + ' (' + c.insee + ')' : c.insee);
+      const liste = [];
+      if (communes.length) {
+        let xy = null;
+        try {
+          const ctl = new AbortController();
+          const minuterie = setTimeout(() => ctl.abort(), 8000);
+          const r = await fetch(XYLO + '/api/situation', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ insee: communes.map((c) => c.insee) }),
+            signal: ctl.signal,
+          });
+          clearTimeout(minuterie);
+          if (r.ok) xy = await r.json();
+        } catch (e) { console.error('[MARTEAU] XYLO injoignable :', e.message); }
+
+        if (!xy || !xy.communes) {
+          liste.push("situation au regard des arrêtés termites et mérule NON VÉRIFIÉE (la base des arrêtés préfectoraux n'a pas répondu, relancer l'analyse)");
+        } else {
+          const termites = [], merule = [], partiel = [], aucun = [];
+          for (const c of communes) {
+            const s = xy.communes[c.insee] || {};
+            const date = (b) => (b && (b.date_arrete || b.date_effet))
+              ? ' — arrêté du ' + new Date(b.date_arrete || b.date_effet).toLocaleDateString('fr-FR') : '';
+            let vise = false;
+            for (const [cle, tab] of [['termite', termites], ['merule', merule]]) {
+              const b = s[cle];
+              if (!b) continue;
+              if (b.statut === 'zonage' || b.statut === 'partiel' || b.statut === 'verifier') {
+                partiel.push(nomC(c) + ' (' + (cle === 'termite' ? 'termites' : 'mérule') + ')'); vise = true;
+              } else if (b.classe) { tab.push(nomC(c) + date(b)); vise = true; }
+            }
+            if (!vise) aucun.push(nomC(c));
+          }
+          const court = (t) => t.slice(0, 6).join(' ; ') + (t.length > 6 ? ` ; et ${t.length - 6} autre(s) commune(s)` : '');
+          if (termites.length) liste.push('état relatif à la présence de termites (' + court(termites) + ')');
+          if (merule.length) liste.push("information de l'acquéreur sur le risque de mérule (" + court(merule) + ')');
+          if (partiel.length) liste.push('situation à vérifier sur l\'annexe de l\'arrêté, zonage partiel de la commune (' + court(partiel) + ')');
+          if (aucun.length) liste.push('aucun arrêté termites ni mérule, vérifié sur la base des arrêtés préfectoraux le ' + aujourdhui() + ' (' + court(aucun) + ')');
+        }
+      }
+      liste.push("autres diagnostics : liste calculée à venir selon l'usage du bien");
+      poser('diag_liste', { liste: liste.join(' ; ') });
+    }
 
     // 8. environnement — lecture du rapport de RISQUES (grille validée par
     // JFD le 08/11/2026). MARTEAU commande le rapport depuis la page du
