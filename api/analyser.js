@@ -351,7 +351,7 @@ export default async function handler(req, res) {
         poser('urba_releve_impossible', { raison: "la base Sitadel n'a pas répondu, actualiser le dossier" });
         poser('assurance_non_verifie', { raison: "la base des autorisations d'urbanisme n'a pas répondu" });
       } else {
-        const listes = [], sansAutor = [], ecarts = [], echecs = [], partiels = [];
+        const listes = [], sansAutor = [], ecarts = [], echecs = [], partiels = [], vides = [];
         let recente = false, sitadelOk = 0;
         for (const x of parcTravaux) {
           const t = tr.parcelles[x.code_parcelle];
@@ -360,6 +360,7 @@ export default async function handler(req, res) {
           sitadelOk++;
           if ((t.sitadel_partiel || []).length) partiels.push(nom);
           const autor = (t.autorisations || []).filter((a) => a.etat !== 'annulé');
+          if (!autor.length) vides.push(nom);
           if (autor.length) {
             listes.push(nom + ' : ' + autor.slice(0, 6).map((a) => {
               let s2 = (TYPE[a.type] || 'autorisation') + (a.numero ? ' n° ' + a.numero : '');
@@ -398,8 +399,10 @@ export default async function handler(req, res) {
           poser('assurance_non_verifie', { raison: "la base des autorisations d'urbanisme n'a pas répondu" });
         } else {
           if (listes.length) poser('urba_releve', { date: aujourdhui(), detail: court(listes) + suffixe });
-          else poser('urba_aucune', { date: aujourdhui(), suite: suffixe });
-          if (sansAutor.length) poser('urba_sans_autorisation', { detail: court(sansAutor) });
+          // Pas de doublon : une parcelle bâtie sans autorisation est déjà
+          // dite par `urba_sans_autorisation` (constaté sur 2026-0002, 09/11).
+          else if (!sansAutor.length) poser('urba_aucune', { date: aujourdhui(), perimetre: court(vides) + suffixe });
+          if (sansAutor.length) poser('urba_sans_autorisation', { detail: court(sansAutor) + (listes.length ? '' : suffixe) });
           if (ecarts.length) poser('urba_emprise_ecart', { detail: court(ecarts) });
           if (recente) poser('assurance_attente');
           else poser('assurance_aucun_releve', { date: aujourdhui() });
