@@ -25,8 +25,8 @@
               padding:10px 14px;margin-bottom:16px;font-size:13px}
   .provisoire b{font-family:Georgia,serif}
   label{display:block;font-size:12px;text-transform:uppercase;letter-spacing:.6px;color:var(--gris);margin-bottom:4px}
-  input[type=text]{width:100%;padding:10px 12px;border:1px solid var(--bord);border-radius:3px;
-                   font-family:inherit;font-size:15px}
+  input[type=text],input[type=date]{width:100%;padding:10px 12px;border:1px solid var(--bord);border-radius:3px;
+                   font-family:inherit;font-size:15px;color:var(--nuit);background:#fff}
   select{width:100%;padding:10px 12px;border:1px solid var(--bord);border-radius:3px;
          font-family:inherit;font-size:15px;background:#fff;color:var(--nuit)}
   button{background:var(--canard);color:#fff;border:0;border-radius:3px;padding:10px 18px;
@@ -226,6 +226,40 @@
         <div style="flex:0 0 160px">
           <label for="collab">Collaborateur</label>
           <input type="text" id="collab" placeholder="ND, NDI…" autocomplete="off" maxlength="6">
+        </div>
+      </div>
+      <!-- 09/11/2026 — informations d'ouverture (migration 012). Le type
+           d'opération commande les couleurs pièce par pièce (vente de
+           l'immeuble ou cession de parts) ; le délai d'audit fixe
+           l'échéance (liste fermée du 09/09) ; la date de signature prévue
+           est facultative (elle fait basculer l'agrément en rouge à dix
+           jours). Sur un dossier REPRIS, ce qui est saisi ici complète ou
+           corrige le dossier, et le changement est journalisé. -->
+      <div class="rang" style="margin-bottom:10px">
+        <div style="flex:0 0 300px">
+          <label for="type-op">Type d’opération</label>
+          <select id="type-op">
+            <option value="">— choisir —</option>
+            <option value="vente_immeuble">Vente de l’immeuble</option>
+            <option value="cession_parts">Cession de parts</option>
+          </select>
+        </div>
+        <div style="flex:0 0 160px">
+          <label for="delai">Délai d’audit</label>
+          <select id="delai">
+            <option value="">— jours —</option>
+            <option value="10">10 jours</option>
+            <option value="20">20 jours</option>
+            <option value="30">30 jours</option>
+            <option value="60">60 jours</option>
+            <option value="90">90 jours</option>
+            <option value="120">120 jours</option>
+            <option value="180">180 jours</option>
+          </select>
+        </div>
+        <div style="flex:0 0 200px">
+          <label for="date-sign">Signature prévue (facultatif)</label>
+          <input type="date" id="date-sign">
         </div>
         <div style="flex:0 0 auto"><button id="enreg">Enregistrer et collecter</button></div>
       </div>
@@ -460,6 +494,7 @@
       p([t('SIREN ' + (doss.siren || '—'), { size: 22, color: COUL.gris })], { after: 600 }),
       p([t('Dossier ', { size: 20 }), t(doss.reference || '—', { bold: true, size: 20 })], { after: 40 }),
       p([t('Associé en charge : ' + (doss.associe || '—') + (doss.collaborateur ? ' · collaborateur : ' + doss.collaborateur : ''), { size: 20 })], { after: 40 }),
+      p([t(infosOuvertureTexte(doss), { size: 20 })], { after: 40 }),
       p([t('Dossier ouvert le ' + dateFr(doss.ouvert_le) + ' · rapport établi le ' + dateFr(maintenant), { size: 20 })], { after: 600 }),
       provisoire
         ? p([t('RAPPORT PROVISOIRE', { bold: true, size: 24, color: COUL.orange }), t(' — ' + ouvertes.length + ' réserve(s) encore ouverte(s). Il ne vaut pas avis définitif.', { size: 20 })])
@@ -626,6 +661,19 @@ const MATRICE_URL = OUTIL('matrice').slice(0, -1);
 // reste un GET ; tout le reste passe par un POST porteur d'une `action`.
 // Les trois anciennes adresses n'existent plus : ne pas les réintroduire.
 const DOSSIER = '/api/dossier';
+// 09/11/2026 — informations d'ouverture, en une ligne lisible. Un champ
+// absent (dossier ouvert avant la migration 012) est DIT, pas masqué :
+// l'audit doit savoir qu'il ignore le type d'opération.
+const LIB_TYPE_OP = { vente_immeuble: 'Vente de l’immeuble', cession_parts: 'Cession de parts' };
+const jourFr = (iso) => (iso ? new Date(iso + 'T12:00:00').toLocaleDateString('fr-FR') : '');
+function infosOuvertureTexte(dd) {
+  return [
+    dd.type_operation ? LIB_TYPE_OP[dd.type_operation] : 'type d’opération non renseigné',
+    dd.delai_audit_jours ? 'audit en ' + dd.delai_audit_jours + ' jours, échéance le ' + jourFr(dd.echeance_audit) : 'délai d’audit non renseigné',
+    dd.date_signature_prevue ? 'signature prévue le ' + jourFr(dd.date_signature_prevue) : 'signature non datée',
+  ].join(' · ');
+}
+
 const posterDossier = async (action, corps) => {
   const r = await fetch(DOSSIER, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -1068,7 +1116,8 @@ async function afficherEtat(ref) {
   let h = '<div class="info"><b>Dossier ' + e(d.dossier.reference) + '</b> — ' + e(d.dossier.denomination || d.dossier.siren)
     + ' · associé ' + e(d.dossier.associe) + (d.dossier.collaborateur ? ' · collaborateur ' + e(d.dossier.collaborateur) : '')
     + ' · ouvert le ' + new Date(d.dossier.ouvert_le).toLocaleString('fr-FR')
-    + ' · <b>' + (d.dossier.etat === 'provisoire' ? 'provisoire' : 'définitif possible') + '</b></div>';
+    + ' · <b>' + (d.dossier.etat === 'provisoire' ? 'provisoire' : 'définitif possible') + '</b>'
+    + '<br>' + infosOuvertureTexte(d.dossier) + '</div>';
 
   // ACTUALISATION COMPLÈTE (arbitrage JFD du 09/11/2026 : actualiser,
   // c'est tout recollecter). Le bouton enchaîne la collecte (REDPAR,
@@ -1384,16 +1433,26 @@ $('#enreg').addEventListener('click', async () => {
   const associe = $('#assoc').value.trim().toUpperCase();
   const collab = $('#collab').value.trim().toUpperCase();
   if (!associe) { $('#enreg-res').innerHTML = '<div class="alerte">L\'associé en charge est requis : c\'est lui que la réserve systématique désigne.</div>'; return; }
+  // 09/11/2026 — informations d'ouverture. Le serveur les exige à la
+  // création ; on prévient ici pour ne pas faire un aller-retour inutile.
+  const typeOp = $('#type-op').value;
+  const delai = $('#delai').value;
+  const dateSign = $('#date-sign').value;
+  if (!typeOp) { $('#enreg-res').innerHTML = '<div class="alerte">Précisez le type d’opération : vente de l’immeuble ou cession de parts. Les couleurs de l’audit en dépendent.</div>'; return; }
+  if (!delai) { $('#enreg-res').innerHTML = '<div class="alerte">Choisissez le délai d’audit : l’échéance du dossier en découle.</div>'; return; }
   $('#enreg').disabled = true;
   $('#enreg-res').innerHTML = '<div class="att">Ouverture du dossier…</div>';
   try {
     const d1 = await posterDossier('ouvrir', {
       siren: PHOTO.societe.siren, denomination: PHOTO.societe.denomination,
       associe, collaborateur: collab || null, qui: collab || associe,
+      type_operation: typeOp, delai_audit_jours: Number(delai),
+      date_signature_prevue: dateSign || null,
     });
 
     $('#enreg-res').innerHTML = '<div class="att">Dossier ' + e(d1.dossier)
-      + (d1.repris ? ' repris' : ' ouvert') + ' — collecte en cours (REDPAR, BODACC)…</div>';
+      + (d1.repris ? ' repris' + (d1.modifie && d1.modifie.length ? ' (informations d’ouverture mises à jour)' : '') : ' ouvert')
+      + ' — collecte en cours (REDPAR, BODACC)…</div>';
 
     const r2 = await fetch('/api/collecter', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
