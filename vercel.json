@@ -23,7 +23,7 @@
       "maxDuration": 60
     },
     "api/analyser.js": {
-      "maxDuration": 30
+      "maxDuration": 60
     },
     "api/reunion.js": {
       "maxDuration": 30
