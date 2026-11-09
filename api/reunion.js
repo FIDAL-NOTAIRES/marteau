@@ -20,6 +20,7 @@
 // Lecture seule. Rien n'est écrit, rien n'est envoyé.
 
 import { db } from '../lib/db.js';
+import { alerteDelai } from '../lib/delais.js';
 
 // Prochain mardi (2) ou jeudi (4), strictement après aujourd'hui.
 function prochaineReunion(depuis = new Date()) {
@@ -54,7 +55,8 @@ export default async function handler(req, res) {
     const precedente = reunionPrecedente(maintenant);
 
     const dossiers = await sql`
-      SELECT id, reference, denomination_tete, siren_tete, associe_en_charge, collaborateur
+      SELECT id, reference, denomination_tete, siren_tete, associe_en_charge, collaborateur,
+             ouvert_le, delai_audit_jours
         FROM marteau_dossier WHERE clos_le IS NULL ORDER BY reference
     `;
 
@@ -85,6 +87,14 @@ export default async function handler(req, res) {
         libelle: p.libelle,
         motif: 'état hypothécaire toujours à saisir au logiciel métier — rien n\'est parti, l\'horloge des 10 jours ne tourne pas',
       }));
+
+      // 09/11/2026 — alerte de délai d'audit (15 jours, 48 heures, dépassée),
+      // en tête des alertes du dossier.
+      const delai = alerteDelai({
+        ouvert_le: d.ouvert_le, delai_audit_jours: d.delai_audit_jours,
+        reserves_ouvertes: reserves.filter((r) => !r.levee_le).length,
+      }, maintenant);
+      if (delai) alertes.unshift({ libelle: 'Délai d\u2019audit', motif: delai.texte, couleur: delai.couleur });
 
       const levees = reserves.filter((r) => r.levee_le && new Date(r.levee_le) >= precedente)
         .map((r) => ({ libelle: r.libelle, levee_par: r.levee_par, motif: r.motif_levee, le: r.levee_le, sous_code: r.levee_sous_code }));
