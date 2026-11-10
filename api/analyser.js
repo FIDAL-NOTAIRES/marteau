@@ -46,6 +46,7 @@
 // ---------------------------------------------------------------------
 
 import { db, journaliser } from '../lib/db.js';
+import { plat, denomComparable } from '../lib/lecture.js';
 import { PHRASES } from '../lib/phrases.js';
 import { sousFamille, voyantsAlimentesPar, cheminDrive } from '../lib/nomenclature.js';
 
@@ -548,6 +549,64 @@ export default async function handler(req, res) {
     // 9. exploitation et contrats
     poser('exploit_attente');
     poser('contrats_attente');
+
+    // 10/11/2026 — ATTESTATION D'ASSURANCE DE L'IMMEUBLE, lue au dépôt
+    // (règle validée par JFD le 09/11/2026) : au nom de la société, couvrant
+    // les biens du dossier, en cours de validité ; expirée ou bien non
+    // couvert → orange ; au nom d'une autre personne → carmin. Un champ que
+    // la lecture n'a pas trouvé n'est jamais supposé : jaune « lecture
+    // partielle ». La couverture se juge commune par commune (l'adresse du
+    // risque doit nommer chaque commune des parcelles de la société).
+    {
+      const assur = await sql`
+        SELECT nom_depose, lecture FROM marteau_document
+         WHERE dossier_id = ${d.id} AND lecture->'nature'->>'code' = 'assurance_immeuble'
+         ORDER BY depose_le`.catch(() => []);
+      if (assur.length) {
+        const denoms = (await sql`SELECT denomination FROM marteau_societe WHERE dossier_id = ${d.id}`)
+          .map((x) => denomComparable(x.denomination)).filter(Boolean);
+        const communes = (await sql`
+          SELECT DISTINCT commune_nom FROM marteau_parcelle
+           WHERE dossier_id = ${d.id} AND en_perimetre AND siren_proprietaire = ${d.siren_tete} AND commune_nom IS NOT NULL
+           ORDER BY commune_nom`).map((x) => x.commune_nom);
+        const lister = (items) => items.slice(0, 6).join(' ; ') + (items.length > 6 ? ` ; et ${items.length - 6} autre(s)` : '');
+        const cmp = (t) => ' ' + plat(t).replace(/[^A-Z0-9]+/g, ' ').trim() + ' ';
+        const jour = new Date().toLocaleDateString('fr-CA', { timeZone: 'Europe/Paris' }); // AAAA-MM-JJ
+        const fr = (x) => x.split('-').reverse().join('/');
+        const autres = [], aReprendre = [], partielles = [], bonnes = [];
+        const couvertes = new Set();
+        let adresseLue = false;
+        for (const a of assur) {
+          const c = (a.lecture && a.lecture.champs) || {};
+          const nom = a.nom_depose;
+          let ok = true;
+          if (c.souscripteur) {
+            const sc = denomComparable(c.souscripteur);
+            if (!denoms.some((x) => sc.includes(x) || x.includes(sc))) { autres.push(nom + ' : assuré « ' + c.souscripteur + ' »'); ok = false; }
+          } else { partielles.push(nom + ' : assuré non lu'); ok = false; }
+          if (c.date_fin) {
+            if (c.date_fin < jour) {
+              if (c.tacite_reconduction) partielles.push(nom + ' : échéance du ' + fr(c.date_fin) + ' passée, reconduction tacite à confirmer par une attestation à jour');
+              else aReprendre.push(nom + ' : expirée le ' + fr(c.date_fin));
+              ok = false;
+            }
+          } else { partielles.push(nom + ' : fin de validité non lue'); ok = false; }
+          if (c.adresse_risque) {
+            adresseLue = true;
+            const A = cmp(c.adresse_risque);
+            for (const cm of communes) if (A.includes(cmp(cm))) couvertes.add(cm);
+          } else { partielles.push(nom + ' : adresse du risque non lue'); ok = false; }
+          if (ok) bonnes.push(nom + ' — ' + [c.assureur, c.numero_contrat ? 'contrat n° ' + c.numero_contrat : null,
+            c.date_fin ? "valable jusqu'au " + fr(c.date_fin) : null].filter(Boolean).join(', '));
+        }
+        const nonCouvertes = adresseLue ? communes.filter((cm) => !couvertes.has(cm)) : [];
+        if (nonCouvertes.length) aReprendre.push('aucune attestation ne vise ' + lister(nonCouvertes));
+        if (autres.length) poser('assur_autre_nom', { precision: lister(autres) });
+        if (aReprendre.length) poser('assur_a_reprendre', { precision: lister(aReprendre) });
+        if (partielles.length) poser('assur_partielle', { precision: lister(partielles) });
+        if (!autres.length && !aReprendre.length && !partielles.length) poser('assur_conforme', { precision: lister(bonnes) });
+      }
+    }
 
     // 10. fiscalité
     poser('fisc_actif_attente');
