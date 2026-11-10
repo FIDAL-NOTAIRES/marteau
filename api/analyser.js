@@ -64,7 +64,7 @@ export default async function handler(req, res) {
 
   try {
     const sql = db();
-    const [d] = await sql`SELECT id, reference, siren_tete, risques FROM marteau_dossier WHERE reference = ${dossier}`;
+    const [d] = await sql`SELECT id, reference, siren_tete, risques, type_operation FROM marteau_dossier WHERE reference = ${dossier}`;
     if (!d) return res.status(404).json({ erreur: `dossier ${dossier} inconnu` });
 
     const refs = await sql`SELECT id, famille, code FROM marteau_voyant_ref`;
@@ -549,6 +549,51 @@ export default async function handler(req, res) {
     // 9. exploitation et contrats
     poser('exploit_attente');
     poser('contrats_attente');
+
+    // 10/11/2026 — BAUX ET QUITTANCES lus au dépôt (code seul ; le sens des
+    // clauses relèvera de Claude, après anonymisation, à l'étape suivante).
+    // Règles validées le 09/11/2026 : bail échu → orange ; vente de
+    // l'immeuble : droit de préférence repéré → orange « droit de préemption
+    // possible » ; cession de parts : clause de changement de contrôle →
+    // orange. Un champ non lu n'est jamais supposé : jaune « lu en partie ».
+    {
+      const pieces = await sql`
+        SELECT nom_depose, lecture FROM marteau_document
+         WHERE dossier_id = ${d.id} AND lecture->'nature'->>'code' IN ('bail', 'quittance')
+         ORDER BY depose_le`.catch(() => []);
+      if (pieces.length) {
+        const lister = (items) => items.slice(0, 6).join(' ; ') + (items.length > 6 ? ` ; et ${items.length - 6} autre(s)` : '');
+        const fr = (x) => x.split('-').reverse().join('/');
+        const eur = (n) => n.toLocaleString('fr-FR', { minimumFractionDigits: n % 1 ? 2 : 0 }) + ' €';
+        const jour = new Date().toLocaleDateString('fr-CA', { timeZone: 'Europe/Paris' });
+        const lus = [], echus = [], partiels = [], preference = [], controle = [], quittances = [];
+        for (const p of pieces) {
+          const c = (p.lecture && p.lecture.champs) || {};
+          if (p.lecture.nature.code === 'quittance') {
+            quittances.push(p.nom_depose + ' — ' + [c.periode_debut ? 'période du ' + fr(c.periode_debut) + (c.periode_fin ? ' au ' + fr(c.periode_fin) : '') : null,
+              c.loyer ? 'loyer ' + eur(c.loyer) : null].filter(Boolean).join(', '));
+            continue;
+          }
+          const manque = [['preneur', 'preneur'], ['loyer', 'loyer'], ['date_effet', "date d'effet"], ['duree_ans', 'durée']].filter(([k]) => !c[k]).map(([, l]) => l);
+          if (manque.length) partiels.push(p.nom_depose + ' : ' + manque.join(', ') + ' non lu(s)');
+          lus.push(p.nom_depose + ' — ' + [c.preneur ? 'preneur ' + c.preneur : null,
+            c.loyer ? 'loyer ' + (c.loyer_periode === 'mensuel' ? 'mensuel ' : 'annuel ') + eur(c.loyer) + (c.loyer_mention ? ' ' + c.loyer_mention.toLowerCase() : '') : null,
+            c.indice ? c.indice + (c.trimestre_reference ? ' ' + c.trimestre_reference.replace('T', 'e trimestre ') : '') : null,
+            c.echeance ? 'échéance ' + fr(c.echeance) : null,
+            c.depot_garantie ? 'dépôt de garantie ' + eur(c.depot_garantie) : null].filter(Boolean).join(', '));
+          if (c.echeance && c.echeance < jour) echus.push(p.nom_depose + ' : terme au ' + fr(c.echeance));
+          const cl = c.clauses || {};
+          if (d.type_operation === 'vente_immeuble' && cl.droit_preference) preference.push(p.nom_depose + (c.preneur ? ' (' + c.preneur + ')' : ''));
+          if (d.type_operation === 'cession_parts' && cl.changement_controle) controle.push(p.nom_depose + (c.preneur ? ' (' + c.preneur + ')' : ''));
+        }
+        if (lus.length) poser('bail_lu', { precision: lister(lus) });
+        if (partiels.length) poser('bail_partiel', { precision: lister(partiels) });
+        if (echus.length) poser('bail_echu', { precision: lister(echus) });
+        if (preference.length) poser('bail_preference', { precision: lister(preference) });
+        if (controle.length) poser('bail_controle', { precision: lister(controle) });
+        if (quittances.length) poser('quittance_lue', { precision: lister(quittances) });
+      }
+    }
 
     // 10/11/2026 — ATTESTATION D'ASSURANCE DE L'IMMEUBLE, lue au dépôt
     // (règle validée par JFD le 09/11/2026) : au nom de la société, couvrant
