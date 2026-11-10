@@ -41,6 +41,7 @@
 // c'est voulu, pour ne pas enchaîner deux migrations sur la même table.
 
 import { db, journaliser } from '../lib/db.js';
+import { lirePiece, LECTURE_VERSION } from '../lib/lecture.js';
 import {
   FAMILLES_DOC,
   SOUS_FAMILLES,
@@ -80,6 +81,7 @@ export default async function handler(req, res) {
       case 'deposer':    return await deposer(res, corps);
       case 'classer':    return await classer(res, corps, { renommage: false });
       case 'renommer':   return await classer(res, corps, { renommage: true });
+      case 'lire':       return await lire(res, corps);
       case 'inventaire': return await inventaire(res, {
         dossier: String(corps.dossier ?? '').trim(),
         groupe: corps.groupe ? Number(corps.groupe) : null,
@@ -87,13 +89,69 @@ export default async function handler(req, res) {
       });
       default:
         return res.status(400).json({
-          erreur: 'action attendue : deposer | classer | renommer | inventaire',
+          erreur: 'action attendue : deposer | classer | renommer | lire | inventaire',
         });
     }
   } catch (e) {
     console.error('[MARTEAU] documents', e);
     return res.status(500).json({ erreur: e.message });
   }
+}
+
+// =====================================================================
+// lire (10/11/2026)
+// =====================================================================
+//
+// Lecture AU DÉPÔT, découplée du Drive (arbitrage de JFD du 09/11/2026) :
+// le navigateur extrait le texte de la pièce qu'il a sous la main (pdf.js)
+// et l'envoie ici avec l'identifiant du document déposé. Le fichier
+// lui-même ne transite pas. Le résultat va dans marteau_document.lecture ;
+// le texte n'est PAS conservé (seul le Drive garde la pièce).
+//
+// Cache par empreinte : une pièce identique déjà lue (même version du
+// socle) n'est pas relue, son résultat est recopié.
+
+const TEXTE_MAX = 300000; // caractères ; au-delà, la fin est ignorée et on le dit
+
+async function lire(res, corps) {
+  const sql = db();
+  const id = Number(corps.document);
+  const qui = String(corps.qui ?? '').trim();
+  if (!Number.isInteger(id)) return res.status(400).json({ erreur: 'document requis' });
+  if (!qui) return res.status(400).json({ erreur: 'qui requis' });
+
+  const [doc] = await sql`
+    SELECT id, dossier_id, empreinte, nom_depose FROM marteau_document WHERE id = ${id}
+  `;
+  if (!doc) return res.status(404).json({ erreur: `document ${id} inconnu` });
+
+  let lecture = null;
+  const [deja] = await sql`
+    SELECT lecture FROM marteau_document
+     WHERE empreinte = ${doc.empreinte} AND id <> ${doc.id}
+       AND lecture IS NOT NULL AND (lecture->>'version')::int = ${LECTURE_VERSION}::int
+     ORDER BY lu_le DESC LIMIT 1
+  `;
+  if (deja) {
+    lecture = { ...deja.lecture, recopiee: true };
+  } else if (corps.format_non_lu) {
+    lecture = { version: LECTURE_VERSION, statut: 'format_non_lu', nature: { code: 'non_reconnue', libelle: 'Format non lu' },
+      format: String(corps.format_non_lu).slice(0, 40) };
+  } else {
+    let texte = String(corps.texte ?? '');
+    const tronque = texte.length > TEXTE_MAX;
+    if (tronque) texte = texte.slice(0, TEXTE_MAX);
+    const pages = Number.isInteger(Number(corps.pages)) && Number(corps.pages) > 0 ? Number(corps.pages) : null;
+    lecture = lirePiece(texte, { pages });
+    if (tronque) lecture.tronque = true;
+  }
+
+  await sql`UPDATE marteau_document SET lecture = ${JSON.stringify(lecture)}::jsonb, lu_le = now() WHERE id = ${doc.id}`;
+  await journaliser(doc.dossier_id, qui.toUpperCase(), 'pièce lue', {
+    document: Number(doc.id), nom: doc.nom_depose, statut: lecture.statut,
+    nature: lecture.nature ? lecture.nature.code : null, recopiee: Boolean(lecture.recopiee),
+  });
+  return res.status(200).json({ document: Number(doc.id), lecture });
 }
 
 // =====================================================================
@@ -124,10 +182,22 @@ async function deposer(res, corps) {
   const [d] = await sql`SELECT id, reference FROM marteau_dossier WHERE reference = ${ref}`;
   if (!d) return res.status(404).json({ erreur: `dossier ${ref} inconnu` });
 
-  const [g] = await sql`
+  let [g] = await sql`
     SELECT id, numero, nom FROM marteau_groupe
      WHERE dossier_id = ${d.id} AND numero = ${numeroGroupe}
+     ORDER BY id LIMIT 1
   `;
+  // 10/11/2026 — arbitrage du 10/09 : une pièce déposée AVANT la validation
+  // des unités foncières prend le numéro de groupe 0000 et sera renommée
+  // quand la numérotation définitive tombera. Aucun écran ne crée encore
+  // les groupes : le groupe provisoire 0 est donc créé au premier dépôt.
+  if (!g && numeroGroupe === 0) {
+    [g] = await sql`
+      INSERT INTO marteau_groupe (dossier_id, nom, numero)
+      VALUES (${d.id}, 'Groupe provisoire (avant validation des unités foncières)', 0)
+      RETURNING id, numero, nom
+    `;
+  }
   if (!g) return res.status(404).json({ erreur: `groupe ${numeroGroupe} inconnu dans ${ref}` });
 
   const deposes = [];
@@ -380,10 +450,15 @@ async function inventaire(res, { dossier, groupe, bac }) {
   const [d] = await sql`SELECT id, reference FROM marteau_dossier WHERE reference = ${dossier}`;
   if (!d) return res.status(404).json({ erreur: `dossier ${dossier} inconnu` });
 
+  // 10/11/2026 — la liste des groupes, pour le choix du groupe au dépôt.
+  const groupes = await sql`
+    SELECT numero, nom FROM marteau_groupe WHERE dossier_id = ${d.id} ORDER BY numero, id
+  `;
+
   const lignes = await sql`
     SELECT dc.id, dc.nom_depose, dc.nom_range, dc.code, dc.piece, dc.date_piece,
            dc.role, dc.parent_id, dc.statut, dc.octets, dc.drive_id, dc.drive_chemin,
-           dc.depose_par, dc.depose_le,
+           dc.depose_par, dc.depose_le, dc.lecture, dc.lu_le,
            g.numero AS groupe_numero, g.nom AS groupe_nom
       FROM marteau_document dc
       JOIN marteau_groupe g ON g.id = dc.groupe_id
@@ -437,6 +512,13 @@ async function inventaire(res, { dossier, groupe, bac }) {
     ranges: ranges.length,
     a_qualifier: aQualifier,
     familles,
+    groupes: groupes.map((g) => ({ numero: g.numero, nom: g.nom })),
+    // 10/11/2026 — toutes les pièces déposées avec leur lecture, pour la
+    // liste « Pièces déposées » de la page du dossier.
+    deposees: lignes.map((l) => ({
+      document: Number(l.id), nom: l.nom_depose, groupe: l.groupe_numero, statut: l.statut,
+      depose_par: l.depose_par, depose_le: l.depose_le, lu_le: l.lu_le, lecture: l.lecture || null,
+    })),
   });
 }
 
