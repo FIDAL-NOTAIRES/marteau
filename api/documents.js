@@ -42,6 +42,7 @@
 
 import { db, journaliser } from '../lib/db.js';
 import { lirePiece, LECTURE_VERSION } from '../lib/lecture.js';
+import { journaliserAnonymisation } from '../lib/google.js';
 import {
   FAMILLES_DOC,
   SOUS_FAMILLES,
@@ -63,6 +64,12 @@ export default async function handler(req, res) {
   try {
     if (req.method === 'GET') {
       const q = req.query ?? {};
+      // 10/11/2026 — essai du raccordement au journal de l'anonymisation
+      // (tableur du Drive de JFD, compte de service) : une ligne « ESSAI ».
+      if (String(q.essai_journal ?? '') === '1') {
+        const u = await journaliserAnonymisation({ outil: 'MARTEAU', type: 'ESSAI', fichier: 'essai de raccordement', elements_retires: 0, version: '—' });
+        return res.status(200).json({ ok: true, ecrit: u });
+      }
       const ref = String(q.dossier ?? '').trim();
       if (!ref) return res.status(400).json({ erreur: 'dossier requis' });
       return await inventaire(res, {
@@ -82,6 +89,17 @@ export default async function handler(req, res) {
       case 'classer':    return await classer(res, corps, { renommage: false });
       case 'renommer':   return await classer(res, corps, { renommage: true });
       case 'lire':       return await lire(res, corps);
+      case 'journal_anonymisation': {
+        // Ligne rendue par la bibliothèque d'anonymisation (r.journal),
+        // inscrite au tableur du Drive. Rien d'autre n'est accepté.
+        const l = corps.ligne || {};
+        const u = await journaliserAnonymisation({
+          date: l.date, outil: String(l.outil || 'MARTEAU').slice(0, 40), type: String(l.type || '').slice(0, 40),
+          fichier: String(l.fichier || '').slice(0, 200), elements_retires: l.elements_retires,
+          detail: l.detail && typeof l.detail === 'object' ? l.detail : null, version: String(l.version || '').slice(0, 20),
+        });
+        return res.status(200).json({ ok: true, ecrit: u });
+      }
       case 'inventaire': return await inventaire(res, {
         dossier: String(corps.dossier ?? '').trim(),
         groupe: corps.groupe ? Number(corps.groupe) : null,
