@@ -1099,6 +1099,132 @@ $('#ouvre').addEventListener('click', () => {
 // ------------------------------------------------------ état d'un dossier
 // Lecture seule. C'est ce qui survit au rechargement : jauges réelles,
 // réserves ouvertes, sociétés du périmètre, queue du journal chaîné.
+// =====================================================================
+// 10/11/2026 — DÉPÔT ET LECTURE DES PIÈCES (socle)
+// =====================================================================
+// Chaîne validée par JFD le 09/11/2026 : le navigateur extrait le texte
+// (pdf.js), le serveur reconnaît la nature et relève ce qui se lit
+// sûrement ; les règles posent les voyants à l'actualisation du dossier.
+// Le fichier ne quitte pas le poste : seul le texte part, pour lecture.
+// Le dépôt sur le Drive est un chantier distinct.
+const DOCUMENTS = '/api/documents';
+const PDFJS = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/';
+let pdfjsPret = null;
+function chargerPdfjs() {
+  if (!pdfjsPret) pdfjsPret = new Promise((ok, ko) => {
+    const s = document.createElement('script');
+    s.src = PDFJS + 'pdf.min.js';
+    s.onload = () => { window.pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS + 'pdf.worker.min.js'; ok(window.pdfjsLib); };
+    s.onerror = () => { pdfjsPret = null; ko(new Error('lecteur PDF injoignable')); };
+    document.head.appendChild(s);
+  });
+  return pdfjsPret;
+}
+async function texteDuPdf(buf) {
+  const lib = await chargerPdfjs();
+  const pdf = await lib.getDocument({ data: buf }).promise;
+  let t = '';
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page = await pdf.getPage(i);
+    const c = await page.getTextContent();
+    for (const it of c.items) { t += it.str; if (it.hasEOL) t += '\n'; }
+    t += '\n';
+    if (t.length > 300000) break;
+  }
+  return { texte: t, pages: pdf.numPages };
+}
+async function empreinteDe(buf) {
+  const h = await crypto.subtle.digest('SHA-256', buf);
+  return [...new Uint8Array(h)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+const STATUT_LECTURE = { lue: 'lue', sans_texte: 'sans texte lisible (numérisation)', format_non_lu: 'format non lu' };
+function resumeLecture(l) {
+  if (!l) return '<span class="att">non lue</span>';
+  const nat = l.nature ? e(l.nature.libelle) : '—';
+  if (l.statut !== 'lue') return nat + '<div class="att">' + e(STATUT_LECTURE[l.statut] || l.statut) + '</div>';
+  const c = l.champs || {};
+  const bits = [];
+  const fr = (x) => x ? x.split('-').reverse().join('/') : null;
+  if (c.assureur) bits.push('assureur : ' + e(c.assureur));
+  if (c.numero_contrat) bits.push('contrat n° ' + e(c.numero_contrat));
+  if (c.souscripteur) bits.push('assuré : ' + e(c.souscripteur));
+  if (c.adresse_risque) bits.push('risque : ' + e(c.adresse_risque));
+  if (c.date_debut || c.date_fin) bits.push('validité : ' + (fr(c.date_debut) || '?') + ' → ' + (fr(c.date_fin) || '?'));
+  if (l.nature && l.nature.code === 'assurance_immeuble') {
+    const manque = ['souscripteur', 'adresse_risque', 'date_fin'].filter((k) => !c[k]);
+    if (manque.length) bits.push('<span style="color:var(--orange)">non lu : ' + manque.map((k) => ({ souscripteur: 'assuré', adresse_risque: 'adresse du risque', date_fin: 'fin de validité' })[k]).join(', ') + '</span>');
+  }
+  return nat + (bits.length ? '<div class="att">' + bits.join(' · ') + '</div>' : '');
+}
+async function chargerDepot(ref, quiDem) {
+  const zone = document.getElementById('depot');
+  if (!zone) return;
+  let inv;
+  try {
+    const r = await fetch(DOCUMENTS + '?dossier=' + encodeURIComponent(ref));
+    inv = await r.json();
+    if (!r.ok) throw new Error(inv.erreur || 'échec');
+  } catch (err) { zone.innerHTML = '<p class="att">Inventaire des pièces injoignable : ' + e(err.message) + '</p>'; return; }
+  const groupes = inv.groupes || [];
+  const options = (groupes.some((g) => g.numero === 0) ? [] : [{ numero: 0, nom: 'Groupe provisoire (avant validation des unités foncières)' }]).concat(groupes);
+  let h = '<div class="rang" style="margin:4px 0 8px;align-items:flex-end"><div style="flex:0 0 auto"><label class="att" for="depot-groupe">Groupe</label><br>'
+    + '<select id="depot-groupe">' + options.map((g) => '<option value="' + g.numero + '">' + String(g.numero).padStart(4, '0') + ' — ' + e(g.nom) + '</option>').join('') + '</select></div>'
+    + '<div style="flex:1 1 auto"><div id="depot-zone" style="border:1px dashed var(--canard);border-radius:3px;padding:14px;text-align:center;cursor:pointer">'
+    + 'Glissez les pièces ici, ou cliquez pour les choisir<input type="file" id="depot-fichiers" multiple accept=".pdf,.txt,application/pdf,text/plain" style="display:none"></div></div></div>'
+    + '<div id="depot-suivi" class="att"></div>';
+  const dep = inv.deposees || [];
+  h += dep.length
+    ? '<table style="margin-top:8px"><thead><tr><th>Pièce déposée</th><th>Groupe</th><th>Lecture</th><th>Déposée</th></tr></thead><tbody>'
+      + dep.map((x) => '<tr><td>' + e(x.nom) + '</td><td>' + String(x.groupe).padStart(4, '0') + '</td><td>' + resumeLecture(x.lecture) + '</td><td>'
+        + e(x.depose_par || '') + '<div class="att">' + new Date(x.depose_le).toLocaleDateString('fr-FR', { timeZone: 'Europe/Paris' }) + '</div></td></tr>').join('')
+      + '</tbody></table>'
+    : '<p class="att" style="margin-top:8px">Aucune pièce déposée.</p>';
+  h += '<p class="att" style="margin:6px 0 0">Le fichier reste sur le poste : seul son texte part, pour lecture. Une pièce numérisée sans texte est signalée, jamais devinée. Les voyants suivent à l\u2019actualisation du dossier.</p>';
+  zone.innerHTML = h;
+  const champ = document.getElementById('depot-fichiers');
+  const cible = document.getElementById('depot-zone');
+  cible.addEventListener('click', () => champ.click());
+  cible.addEventListener('dragover', (ev) => { ev.preventDefault(); cible.style.background = 'rgba(51,131,139,.08)'; });
+  cible.addEventListener('dragleave', () => { cible.style.background = ''; });
+  cible.addEventListener('drop', (ev) => { ev.preventDefault(); cible.style.background = ''; deposerFichiers(ref, quiDem, [...ev.dataTransfer.files]); });
+  champ.addEventListener('change', () => deposerFichiers(ref, quiDem, [...champ.files]));
+}
+async function deposerFichiers(ref, quiDem, fichiers) {
+  if (!fichiers.length) return;
+  const suivi = document.getElementById('depot-suivi');
+  const groupe = Number(document.getElementById('depot-groupe').value);
+  const qui = quiDem();
+  const lignes = [];
+  const montrer = () => { suivi.innerHTML = lignes.join('<br>'); };
+  for (const f of fichiers) {
+    const i = lignes.push(e(f.name) + ' : préparation…') - 1; montrer();
+    try {
+      const buf = await f.arrayBuffer();
+      const empreinte = await empreinteDe(buf);
+      const r1 = await fetch(DOCUMENTS, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'deposer', dossier: ref, groupe, qui, fichiers: [{ nom: f.name, octets: f.size, mime: f.type || null, empreinte }] }) });
+      const d1 = await r1.json();
+      if (!r1.ok) throw new Error(d1.erreur || 'dépôt refusé');
+      if (!(d1.deposes || []).length) { lignes[i] = e(f.name) + ' : ' + e(((d1.refuses || [])[0] || {}).motif || 'refusé'); montrer(); continue; }
+      const id = d1.deposes[0].document;
+      lignes[i] = e(f.name) + ' : lecture…'; montrer();
+      const corps = { action: 'lire', document: id, qui };
+      const pdf = /\.pdf$/i.test(f.name) || f.type === 'application/pdf';
+      if (pdf) Object.assign(corps, await texteDuPdf(buf));
+      else if (/^text\//.test(f.type) || /\.txt$/i.test(f.name)) corps.texte = new TextDecoder().decode(buf);
+      else corps.format_non_lu = f.type || (f.name.split('.').pop() || 'inconnu');
+      const r2 = await fetch(DOCUMENTS, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(corps) });
+      const d2 = await r2.json();
+      if (!r2.ok) throw new Error(d2.erreur || 'lecture refusée');
+      const l = d2.lecture || {};
+      lignes[i] = e(f.name) + ' : ' + e(l.nature ? l.nature.libelle : '—') + (l.statut !== 'lue' ? ' (' + e(STATUT_LECTURE[l.statut] || l.statut) + ')' : '');
+    } catch (err) { lignes[i] = e(f.name) + ' : échec — ' + e(err.message); }
+    montrer();
+  }
+  lignes.push('Terminé. Cliquez sur « Actualiser le dossier » pour mettre les voyants à jour.'); montrer();
+  setTimeout(() => chargerDepot(ref, quiDem).then(() => { const s2 = document.getElementById('depot-suivi'); if (s2) s2.innerHTML = lignes.join('<br>'); }), 300);
+}
+
 const DEUX_HEURES = 2 * 60 * 60 * 1000;
 function classeActu(le) {
   return le && (Date.now() - new Date(le).getTime()) < DEUX_HEURES ? 'actu-fraiche' : 'actu-vieille';
@@ -1233,6 +1359,10 @@ async function afficherEtat(ref) {
     + '<p class="att" style="margin:6px 0 0">Les pièces « à demander » sont déduites des voyants jaunes. Le K-bis n\'y figure pas : l\'étude le demande elle-même. '
     + 'MARTEAU rédige, le collaborateur envoie depuis sa boîte — aucun mail ne part de la machine. Les demandes aux mairies partent commune par commune, brique séparée.</p>';
 
+  // 10/11/2026 — dépôt et lecture des pièces (socle de lecture). Rempli
+  // après coup par chargerDepot(), qui interroge /api/documents.
+  h += '<h3 id="sec-depot" style="font-size:15px;margin:16px 0 6px">Pièces déposées</h3><div id="depot"><p class="att">Chargement…</p></div>';
+
   // Le titre PORTE LA VENTILATION. Un total seul (« 3 828 parcelles »)
   // laissait croire que tout appartient à la société auditée, alors que
   // la descente sur les filiales fait entrer les parcelles des sociétés
@@ -1282,6 +1412,7 @@ async function afficherEtat(ref) {
   const cochees = (nature) => [].slice.call(document.querySelectorAll('#registre .ckp:checked'))
     .filter((k) => !nature || k.dataset.nature === nature).map((k) => Number(k.dataset.id));
   const quiDem = () => ($('#collab').value || $('#assoc').value || 'JFD').trim().toUpperCase();
+  chargerDepot(ref, quiDem);
 
   $('#risques-go').addEventListener('click', () => lancerRisques(ref, quiDem()));
   if ($('#io-enreg')) $('#io-enreg').addEventListener('click', async () => {
