@@ -1150,6 +1150,13 @@ function resumeLecture(l) {
   if (c.souscripteur) bits.push('assuré : ' + e(c.souscripteur));
   if (c.adresse_risque) bits.push('risque : ' + e(c.adresse_risque));
   if (c.date_debut || c.date_fin) bits.push('validité : ' + (fr(c.date_debut) || '?') + ' → ' + (fr(c.date_fin) || '?'));
+  // 10/11/2026 — baux et quittances
+  if (c.preneur) bits.push('preneur : ' + e(c.preneur));
+  if (c.loyer) bits.push('loyer : ' + c.loyer.toLocaleString('fr-FR') + ' €' + (c.loyer_periode ? ' (' + c.loyer_periode + ')' : ''));
+  if (c.indice) bits.push('indice : ' + e(c.indice) + (c.trimestre_reference ? ' ' + e(c.trimestre_reference) : ''));
+  if (c.echeance) bits.push('échéance : ' + fr(c.echeance));
+  if (c.periode_debut) bits.push('période : ' + fr(c.periode_debut) + (c.periode_fin ? ' → ' + fr(c.periode_fin) : ''));
+  if (c.clauses) { const k = Object.entries(c.clauses).filter(([, v]) => v).map(([n]) => ({ indexation: 'indexation', changement_controle: 'changement de contrôle', droit_preference: 'droit de préférence' })[n]); if (k.length) bits.push('clauses repérées : ' + k.join(', ')); }
   if (l.nature && l.nature.code === 'assurance_immeuble') {
     const manque = ['souscripteur', 'adresse_risque', 'date_fin'].filter((k) => !c[k]);
     if (manque.length) bits.push('<span style="color:var(--orange)">non lu : ' + manque.map((k) => ({ souscripteur: 'assuré', adresse_risque: 'adresse du risque', date_fin: 'fin de validité' })[k]).join(', ') + '</span>');
