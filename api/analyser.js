@@ -47,6 +47,7 @@
 
 import { db, journaliser } from '../lib/db.js';
 import { plat, denomComparable } from '../lib/lecture.js';
+import { loyerIndexe, moisCouverts } from '../lib/indices.js';
 import { PHRASES } from '../lib/phrases.js';
 import { sousFamille, voyantsAlimentesPar, cheminDrive } from '../lib/nomenclature.js';
 
@@ -567,13 +568,16 @@ export default async function handler(req, res) {
         const eur = (n) => n.toLocaleString('fr-FR', { minimumFractionDigits: n % 1 ? 2 : 0 }) + ' €';
         const jour = new Date().toLocaleDateString('fr-CA', { timeZone: 'Europe/Paris' });
         const lus = [], echus = [], partiels = [], preference = [], controle = [], quittances = [];
+        const baux = [], qts = [];
         for (const p of pieces) {
           const c = (p.lecture && p.lecture.champs) || {};
           if (p.lecture.nature.code === 'quittance') {
+            qts.push({ nom: p.nom_depose, c });
             quittances.push(p.nom_depose + ' — ' + [c.periode_debut ? 'période du ' + fr(c.periode_debut) + (c.periode_fin ? ' au ' + fr(c.periode_fin) : '') : null,
               c.loyer ? 'loyer ' + eur(c.loyer) : null].filter(Boolean).join(', '));
             continue;
           }
+          baux.push({ nom: p.nom_depose, c });
           const manque = [['preneur', 'preneur'], ['loyer', 'loyer'], ['date_effet', "date d'effet"], ['duree_ans', 'durée']].filter(([k]) => !c[k]).map(([, l]) => l);
           if (manque.length) partiels.push(p.nom_depose + ' : ' + manque.join(', ') + ' non lu(s)');
           lus.push(p.nom_depose + ' — ' + [c.preneur ? 'preneur ' + c.preneur : null,
@@ -591,7 +595,33 @@ export default async function handler(req, res) {
         if (echus.length) poser('bail_echu', { precision: lister(echus) });
         if (preference.length) poser('bail_preference', { precision: lister(preference) });
         if (controle.length) poser('bail_controle', { precision: lister(controle) });
-        if (quittances.length) poser('quittance_lue', { precision: lister(quittances) });
+        // 10/11/2026 — étape C : loyer indexé (indices de l'INSEE) comparé à
+        // la quittance la plus récente ; aucune marge, sauf l'arrondi au
+        // centime (règle de JFD du 09/11/2026). Rapprochement possible
+        // seulement quand le dossier ne compte qu'un bail lu.
+        if (qts.length) {
+          const derniere = qts.filter((q) => q.c.periode_debut).sort((x, y) => (x.c.periode_debut < y.c.periode_debut ? 1 : -1))[0];
+          if (baux.length !== 1 || !derniere) {
+            poser('quittance_lue', { precision: lister(quittances) + (baux.length > 1 ? ' — plusieurs baux au dossier, rapprochement à faire bail par bail' : baux.length ? '' : ' — aucun bail lu au dossier') });
+          } else {
+            const b = baux[0].c, q = derniere.c;
+            const mois = moisCouverts(q.periode_debut, q.periode_fin);
+            let calcul = null;
+            try { calcul = await loyerIndexe(b, q.periode_debut); } catch (err) { calcul = { calculable: false, motif: 'indices de l\'INSEE injoignables (' + err.message + ')' }; }
+            if (!calcul.calculable || !mois || !q.loyer) {
+              poser('quittance_non_calculee', { precision: derniere.nom + ' : ' + (calcul && !calcul.calculable ? calcul.motif : (!mois ? 'période de la quittance non lue' : 'loyer de la quittance non lu')) });
+            } else {
+              const annuel = b.loyer_periode === 'mensuel' ? calcul.annuel * 12 : calcul.annuel;
+              const attendu = Math.round(annuel * mois / 12 * 100) / 100;
+              const ecart = Math.round((q.loyer - attendu) * 100) / 100;
+              const detail = derniere.nom + ' (période du ' + fr(q.periode_debut) + (q.periode_fin ? ' au ' + fr(q.periode_fin) : '') + ') : quittancé ' + eur(q.loyer)
+                + ', loyer indexé ' + eur(attendu) + ' pour ' + mois + ' mois — ' + calcul.texte_indice + ', loyer annuel indexé ' + eur(annuel);
+              if (Math.abs(ecart) <= 0.01) poser('quittance_conforme', { precision: detail });
+              else poser('quittance_ecart', { precision: detail + ', écart de ' + (ecart > 0 ? '+' : '−') + eur(Math.abs(ecart))
+                + (ecart < 0 ? ' en faveur du preneur (un avenant, une révision ou le plafonnement de 3,5 % de la loi du 16 août 2022 peut l\'expliquer)' : ' au détriment du preneur') });
+            }
+          }
+        }
       }
     }
 
