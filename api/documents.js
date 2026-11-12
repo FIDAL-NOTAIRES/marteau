@@ -41,7 +41,7 @@
 // c'est voulu, pour ne pas enchaîner deux migrations sur la même table.
 
 import { db, journaliser } from '../lib/db.js';
-import { lirePiece, LECTURE_VERSION } from '../lib/lecture.js';
+import { lirePiece, LECTURE_VERSION, extraitsClauses } from '../lib/lecture.js';
 import { journaliserAnonymisation } from '../lib/google.js';
 import {
   FAMILLES_DOC,
@@ -89,6 +89,7 @@ export default async function handler(req, res) {
       case 'classer':    return await classer(res, corps, { renommage: false });
       case 'renommer':   return await classer(res, corps, { renommage: true });
       case 'lire':       return await lire(res, corps);
+      case 'clauses':    return await clauses(res, corps);
       case 'journal_anonymisation': {
         // Ligne rendue par la bibliothèque d'anonymisation (r.journal),
         // inscrite au tableur du Drive. Rien d'autre n'est accepté.
@@ -169,7 +170,72 @@ async function lire(res, corps) {
     document: Number(doc.id), nom: doc.nom_depose, statut: lecture.statut,
     nature: lecture.nature ? lecture.nature.code : null, recopiee: Boolean(lecture.recopiee),
   });
-  return res.status(200).json({ document: Number(doc.id), lecture });
+  // 11/11/2026 — étape B : les passages des clauses repérées sont rendus au
+  // navigateur (jamais conservés), pour anonymisation puis envoi à Claude
+  // sur validation de JFD.
+  const extraits = lecture.statut === 'lue' && lecture.nature && lecture.nature.code === 'bail'
+    ? extraitsClauses(String(corps.texte ?? '').slice(0, TEXTE_MAX)) : [];
+  return res.status(200).json({ document: Number(doc.id), lecture, extraits });
+}
+
+// =====================================================================
+// clauses (11/11/2026) — sens des clauses par Claude
+// =====================================================================
+//
+// Modèle validé par JFD le 10/11/2026, calqué sur FUSION : le code a lu ce
+// qu'il pouvait ; seuls les passages des clauses repérées partent, APRÈS
+// anonymisation dans le navigateur (bibliothèque commune), avec compteur et
+// coût estimé affichés, et sur VALIDATION DE JFD SEUL. Claude rend des
+// données structurées, jamais une couleur : les règles restent en code.
+
+const MODELE = 'claude-sonnet-5-5';
+const CONSIGNE = `Tu lis des extraits anonymisés de baux français pour un office notarial.
+Réponds UNIQUEMENT par un objet JSON, sans texte autour, de la forme :
+{"indexation":{"present":true|false,"periodicite":"annuelle"|"triennale"|"autre"|null,"indice":"ILC"|"ILAT"|"ICC"|"IRL"|null,"trimestre_reference":"4T2018"|null,"plafond_ou_plancher":true|false,"resume":"…"},
+ "changement_controle":{"present":true|false,"effet":"resiliation"|"agrement"|"information"|"autre"|null,"resume":"…"},
+ "droit_preference":{"present":true|false,"fondement":"legal"|"contractuel"|null,"exclu_ou_renonce":true|false,"resume":"…"}}
+Règles : n'invente rien ; si une clause n'est pas dans les extraits, "present":false et "resume":"" ; chaque résumé tient en une phrase française, sans nom de personne.`;
+
+async function clauses(res, corps) {
+  const sql = db();
+  const id = Number(corps.document);
+  const qui = String(corps.qui ?? '').trim().toUpperCase();
+  if (!Number.isInteger(id)) return res.status(400).json({ erreur: 'document requis' });
+  if (qui !== 'JFD') return res.status(403).json({ erreur: "l'envoi à Claude est réservé à JFD" });
+  if (!process.env.ANTHROPIC_API_KEY) return res.status(500).json({ erreur: 'ANTHROPIC_API_KEY absente des variables Vercel' });
+  const extraits = Array.isArray(corps.extraits) ? corps.extraits.slice(0, 6) : [];
+  const anonym = corps.anonymisation || {};
+  if (!extraits.length) return res.status(400).json({ erreur: 'aucun extrait' });
+  if (!anonym.version) return res.status(400).json({ erreur: "extraits non anonymisés : envoi refusé" });
+
+  const [doc] = await sql`SELECT id, dossier_id, nom_depose, lecture FROM marteau_document WHERE id = ${id}`;
+  if (!doc) return res.status(404).json({ erreur: `document ${id} inconnu` });
+
+  const texte = extraits.map((e) => `--- ${String(e.clause || '').slice(0, 40)} ---\n${String(e.texte || '').slice(0, 4000)}`).join('\n\n');
+  const r = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: { 'x-api-key': process.env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+    body: JSON.stringify({ model: MODELE, max_tokens: 1200, system: CONSIGNE, messages: [{ role: 'user', content: texte }] }),
+  });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) return res.status(502).json({ erreur: 'Claude : ' + ((d.error && d.error.message) || r.status) });
+  const brut = (d.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('').replace(/```json|```/g, '').trim();
+  let analyse;
+  try { analyse = JSON.parse(brut); } catch { return res.status(502).json({ erreur: 'réponse de Claude illisible', brut: brut.slice(0, 500) }); }
+
+  const usage = d.usage || {};
+  const cout = Math.round(((usage.input_tokens || 0) * 2 + (usage.output_tokens || 0) * 10) / 1e6 * 10000) / 10000;
+  const lecture = { ...(doc.lecture || {}), clauses_analyse: {
+    ...analyse, modele: MODELE, le: new Date().toISOString(),
+    anonymisation: { version: String(anonym.version).slice(0, 20), type: String(anonym.type || '').slice(0, 40) },
+    jetons: { entree: usage.input_tokens || 0, sortie: usage.output_tokens || 0 }, cout_dollars: cout,
+  } };
+  await sql`UPDATE marteau_document SET lecture = ${JSON.stringify(lecture)}::jsonb WHERE id = ${doc.id}`;
+  await journaliser(doc.dossier_id, qui, 'clauses lues par Claude', {
+    document: Number(doc.id), nom: doc.nom_depose, modele: MODELE, extraits: extraits.length,
+    jetons: lecture.clauses_analyse.jetons, cout_dollars: cout, anonymisation: lecture.clauses_analyse.anonymisation,
+  });
+  return res.status(200).json({ document: Number(doc.id), analyse: lecture.clauses_analyse });
 }
 
 // =====================================================================
