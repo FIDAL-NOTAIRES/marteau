@@ -1186,6 +1186,7 @@ async function chargerDepot(ref, quiDem) {
         + e(x.depose_par || '') + '<div class="att">' + new Date(x.depose_le).toLocaleDateString('fr-FR', { timeZone: 'Europe/Paris' }) + '</div></td></tr>').join('')
       + '</tbody></table>'
     : '<p class="att" style="margin-top:8px">Aucune pièce déposée.</p>';
+  h += panneauClauses(quiDem);
   h += '<p class="att" style="margin:6px 0 0">Le fichier reste sur le poste : seul son texte part, pour lecture. Une pièce numérisée sans texte est signalée, jamais devinée. Les voyants suivent à l\u2019actualisation du dossier.</p>';
   zone.innerHTML = h;
   const champ = document.getElementById('depot-fichiers');
@@ -1195,6 +1196,94 @@ async function chargerDepot(ref, quiDem) {
   cible.addEventListener('dragleave', () => { cible.style.background = ''; });
   cible.addEventListener('drop', (ev) => { ev.preventDefault(); cible.style.background = ''; deposerFichiers(ref, quiDem, [...ev.dataTransfer.files]); });
   champ.addEventListener('change', () => deposerFichiers(ref, quiDem, [...champ.files]));
+  zone.querySelectorAll('[data-clauses-voir]').forEach((b) => b.addEventListener('click', () => voirClauses(b.dataset.clausesVoir)));
+  zone.querySelectorAll('[data-clauses-envoyer]').forEach((b) => b.addEventListener('click', () => envoyerClauses(ref, quiDem, b.dataset.clausesEnvoyer, b)));
+}
+
+// =====================================================================
+// 11/11/2026 — ÉTAPE B : SENS DES CLAUSES PAR CLAUDE
+// =====================================================================
+// Modèle validé par JFD (calqué sur FUSION) : seuls les passages des clauses
+// repérées partent, APRÈS anonymisation dans ce navigateur (bibliothèque
+// commune), avec compteur et coût estimé, sur validation de JFD SEUL. Les
+// passages ne vivent qu'en mémoire de cette page : après rechargement, il
+// faut redéposer le bail pour les retrouver.
+const clausesEnAttente = {};
+const ANONYMISATION = 'https://anonymisation-olive.vercel.app/anonymisation.js';
+let anonymisationPrete = null;
+function chargerAnonymisation() {
+  if (window.FidalAnonymisation) return Promise.resolve(window.FidalAnonymisation);
+  if (!anonymisationPrete) anonymisationPrete = new Promise((ok, ko) => {
+    const s = document.createElement('script');
+    s.src = ANONYMISATION;
+    s.onload = () => (window.FidalAnonymisation ? ok(window.FidalAnonymisation) : ko(new Error('bibliothèque d\u2019anonymisation illisible')));
+    s.onerror = () => { anonymisationPrete = null; ko(new Error('bibliothèque d\u2019anonymisation injoignable')); };
+    document.head.appendChild(s);
+  });
+  return anonymisationPrete;
+}
+const LIBELLE_CLAUSE = { indexation: 'indexation', changement_controle: 'changement de contrôle', droit_preference: 'droit de préférence' };
+function estimation(extraits) {
+  const car = extraits.reduce((n, x) => n + x.texte.length, 0);
+  const entree = Math.round(car / 3.5) + 600, sortie = 400;
+  return { car, entree, sortie, cout: (entree * 2 + sortie * 10) / 1e6 };
+}
+function panneauClauses(quiDem) {
+  const ids = Object.keys(clausesEnAttente);
+  if (!ids.length) return '';
+  const jfd = quiDem() === 'JFD';
+  return '<div style="margin-top:10px;border:1px solid var(--orange);border-radius:3px;padding:10px 12px">'
+    + '<b>Clauses à faire lire par Claude</b>'
+    + ids.map((id) => {
+      const c = clausesEnAttente[id], est = estimation(c.extraits);
+      return '<div style="margin-top:8px">' + e(c.nom) + ' — ' + c.extraits.map((x) => LIBELLE_CLAUSE[x.clause] || x.clause).join(', ')
+        + '<div class="att">' + est.car.toLocaleString('fr-FR') + ' caractères, environ ' + est.entree.toLocaleString('fr-FR') + ' jetons envoyés ; coût estimé ≈ '
+        + est.cout.toLocaleString('fr-FR', { maximumFractionDigits: 3 }) + ' $ (Claude Sonnet 5.5 : 2 $ et 10 $ le million de jetons). Anonymisation dans ce navigateur avant tout envoi.</div>'
+        + '<div class="rang" style="margin:6px 0 0"><div style="flex:0 0 auto"><button class="sec" data-clauses-voir="' + id + '">Voir ce qui partirait</button></div>'
+        + (jfd ? '<div style="flex:0 0 auto"><button data-clauses-envoyer="' + id + '">Envoyer à Claude</button></div>' : '<div class="att" style="flex:1 1 auto">Envoi réservé à JFD.</div>')
+        + '</div><pre id="clauses-voir-' + id + '" style="white-space:pre-wrap;font-size:12px;margin:6px 0 0"></pre></div>';
+    }).join('') + '</div>';
+}
+async function anonymiserClauses(id) {
+  const c = clausesEnAttente[id];
+  const A = await chargerAnonymisation();
+  const type = c.nature_bail === 'habitation' ? 'bail_habitation' : 'bail_commercial';
+  const joint = c.extraits.map((x) => '@@' + x.clause + '@@\n' + x.texte).join('\n');
+  const r = A.anonymiser(joint, type, { outil: 'MARTEAU', fichier: c.nom });
+  if (!r.ok) return r;
+  const morceaux = r.texte.split(/@@([a-z_]+)@@\n/).slice(1);
+  const extraits = [];
+  for (let k = 0; k < morceaux.length; k += 2) extraits.push({ clause: morceaux[k], texte: morceaux[k + 1].trim() });
+  return { ...r, extraits };
+}
+async function voirClauses(id) {
+  const zone = document.getElementById('clauses-voir-' + id);
+  try {
+    const r = await anonymiserClauses(id);
+    if (!r.ok) { zone.textContent = 'Envoi bloqué — ' + r.motif + '. ' + r.geste; return; }
+    const d = Object.entries(r.retires).map(([k, v]) => v + ' × ' + k.toLowerCase()).join(', ') || 'aucun';
+    zone.textContent = 'Éléments retirés : ' + d + ' (anonymisation ' + r.version + ')\n\n' + r.extraits.map((x) => '— ' + (LIBELLE_CLAUSE[x.clause] || x.clause) + ' —\n' + x.texte).join('\n\n');
+  } catch (err) { zone.textContent = 'Anonymisation impossible : ' + err.message + '. Rien ne part.'; }
+}
+async function envoyerClauses(ref, quiDem, id, bouton) {
+  const zone = document.getElementById('clauses-voir-' + id);
+  bouton.disabled = true; const avant = bouton.textContent; bouton.textContent = 'Envoi…';
+  try {
+    const r = await anonymiserClauses(id);
+    if (!r.ok) throw new Error(r.motif + '. ' + r.geste);
+    const j = await fetch(DOCUMENTS, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'journal_anonymisation', ligne: r.journal }) });
+    if (!j.ok) throw new Error('journal de l\u2019anonymisation non écrit : rien n\u2019est envoyé');
+    const q = await fetch(DOCUMENTS, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'clauses', document: Number(id), qui: quiDem(), extraits: r.extraits, anonymisation: { version: r.version, type: r.type } }) });
+    const d = await q.json();
+    if (!q.ok) throw new Error(d.erreur || 'envoi refusé');
+    const a = d.analyse || {};
+    const ligne = (k) => a[k] && a[k].present ? (LIBELLE_CLAUSE[k] + ' : ' + (a[k].resume || 'présente')) : (LIBELLE_CLAUSE[k] + ' : absente des extraits');
+    zone.textContent = 'Lu par Claude — ' + ['indexation', 'changement_controle', 'droit_preference'].map(ligne).join(' ; ')
+      + '\nCoût réel : ' + (a.cout_dollars || 0).toLocaleString('fr-FR', { maximumFractionDigits: 4 }) + ' $. Cliquez sur « Actualiser le dossier » pour mettre les voyants à jour.';
+    delete clausesEnAttente[id];
+    bouton.remove();
+  } catch (err) { zone.textContent = 'Échec : ' + err.message; bouton.disabled = false; bouton.textContent = avant; }
 }
 async function deposerFichiers(ref, quiDem, fichiers) {
   if (!fichiers.length) return;
@@ -1212,8 +1301,10 @@ async function deposerFichiers(ref, quiDem, fichiers) {
         body: JSON.stringify({ action: 'deposer', dossier: ref, groupe, qui, fichiers: [{ nom: f.name, octets: f.size, mime: f.type || null, empreinte }] }) });
       const d1 = await r1.json();
       if (!r1.ok) throw new Error(d1.erreur || 'dépôt refusé');
-      if (!(d1.deposes || []).length) { lignes[i] = e(f.name) + ' : ' + e(((d1.refuses || [])[0] || {}).motif || 'refusé'); montrer(); continue; }
-      const id = d1.deposes[0].document;
+      const refus = (d1.refuses || [])[0] || {};
+      // 11/11/2026 — une pièce déjà déposée est relue (pour ses clauses).
+      const id = (d1.deposes || [])[0] ? d1.deposes[0].document : refus.document;
+      if (!id) { lignes[i] = e(f.name) + ' : ' + e(refus.motif || 'refusé'); montrer(); continue; }
       lignes[i] = e(f.name) + ' : lecture…'; montrer();
       const corps = { action: 'lire', document: id, qui };
       const pdf = /\.pdf$/i.test(f.name) || f.type === 'application/pdf';
@@ -1224,6 +1315,7 @@ async function deposerFichiers(ref, quiDem, fichiers) {
       const d2 = await r2.json();
       if (!r2.ok) throw new Error(d2.erreur || 'lecture refusée');
       const l = d2.lecture || {};
+      if ((d2.extraits || []).length) clausesEnAttente[id] = { nom: f.name, extraits: d2.extraits, nature_bail: (l.champs || {}).nature_bail || null };
       lignes[i] = e(f.name) + ' : ' + e(l.nature ? l.nature.libelle : '—') + (l.statut !== 'lue' ? ' (' + e(STATUT_LECTURE[l.statut] || l.statut) + ')' : '');
     } catch (err) { lignes[i] = e(f.name) + ' : échec — ' + e(err.message); }
     montrer();
