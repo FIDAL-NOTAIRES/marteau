@@ -567,7 +567,7 @@ export default async function handler(req, res) {
         const fr = (x) => x.split('-').reverse().join('/');
         const eur = (n) => n.toLocaleString('fr-FR', { minimumFractionDigits: n % 1 ? 2 : 0 }) + ' €';
         const jour = new Date().toLocaleDateString('fr-CA', { timeZone: 'Europe/Paris' });
-        const lus = [], echus = [], partiels = [], preference = [], controle = [], quittances = [];
+        const lus = [], echus = [], partiels = [], preference = [], preferenceLue = [], controle = [], quittances = [];
         const baux = [], qts = [];
         for (const p of pieces) {
           const c = (p.lecture && p.lecture.champs) || {};
@@ -597,7 +597,10 @@ export default async function handler(req, res) {
           const resume = (k) => (ca && ca[k] && net(ca[k].resume) ? ' — lu par Claude : ' + net(ca[k].resume) : '');
           const pref = ca && ca.droit_preference ? ca.droit_preference.present : cl.droit_preference;
           const ctrl = ca && ca.changement_controle ? ca.changement_controle.present : cl.changement_controle;
-          if (d.type_operation === 'vente_immeuble' && pref) preference.push(p.nom_depose + (c.preneur ? ' (' + c.preneur + ')' : '') + resume('droit_preference'));
+          // 12/11/2026 — clause confirmée par la lecture de Claude : phrase
+          // « confirmé à la lecture du bail » ; simple repérage du code :
+          // phrase « possible ». La couleur (orange) reste posée par le code.
+          if (d.type_operation === 'vente_immeuble' && pref) (ca && ca.droit_preference ? preferenceLue : preference).push(p.nom_depose + (c.preneur ? ' (' + c.preneur + ')' : '') + resume('droit_preference'));
           if (d.type_operation === 'cession_parts' && ctrl) controle.push(p.nom_depose + (c.preneur ? ' (' + c.preneur + ')' : '') + resume('changement_controle'));
           if (ca && ca.indexation && ca.indexation.present && net(ca.indexation.resume)) lus[lus.length - 1] += ' ; indexation lue par Claude : ' + net(ca.indexation.resume);
         }
@@ -605,6 +608,7 @@ export default async function handler(req, res) {
         if (partiels.length) poser('bail_partiel', { precision: lister(partiels) });
         if (echus.length) poser('bail_echu', { precision: lister(echus) });
         if (preference.length) poser('bail_preference', { precision: lister(preference) });
+        if (preferenceLue.length) poser('bail_preference_confirmee', { precision: lister(preferenceLue) });
         if (controle.length) poser('bail_controle', { precision: lister(controle) });
         // 10/11/2026 — étape C : loyer indexé (indices de l'INSEE) comparé à
         // la quittance la plus récente ; aucune marge, sauf l'arrondi au
