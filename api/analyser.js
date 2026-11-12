@@ -591,12 +591,15 @@ export default async function handler(req, res) {
           // anonymisation, sur validation de JFD), sa lecture précise ou
           // écarte le simple repérage du code ; elle ne pose jamais de couleur.
           const ca = p.lecture.clauses_analyse || null;
-          const resume = (k) => (ca && ca[k] && ca[k].resume ? ' — lu par Claude : ' + ca[k].resume : '');
+          // 12/11/2026 — le résumé de Claude finit souvent par un point : on
+          // l'ôte, la phrase type pose le sien (plus de « .. » à l'écran).
+          const net = (t) => String(t ?? '').trim().replace(/[.\s]+$/, '');
+          const resume = (k) => (ca && ca[k] && net(ca[k].resume) ? ' — lu par Claude : ' + net(ca[k].resume) : '');
           const pref = ca && ca.droit_preference ? ca.droit_preference.present : cl.droit_preference;
           const ctrl = ca && ca.changement_controle ? ca.changement_controle.present : cl.changement_controle;
           if (d.type_operation === 'vente_immeuble' && pref) preference.push(p.nom_depose + (c.preneur ? ' (' + c.preneur + ')' : '') + resume('droit_preference'));
           if (d.type_operation === 'cession_parts' && ctrl) controle.push(p.nom_depose + (c.preneur ? ' (' + c.preneur + ')' : '') + resume('changement_controle'));
-          if (ca && ca.indexation && ca.indexation.present && ca.indexation.resume) lus[lus.length - 1] += ' ; indexation lue par Claude : ' + ca.indexation.resume;
+          if (ca && ca.indexation && ca.indexation.present && net(ca.indexation.resume)) lus[lus.length - 1] += ' ; indexation lue par Claude : ' + net(ca.indexation.resume);
         }
         if (lus.length) poser('bail_lu', { precision: lister(lus) });
         if (partiels.length) poser('bail_partiel', { precision: lister(partiels) });
