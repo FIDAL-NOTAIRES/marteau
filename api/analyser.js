@@ -587,8 +587,16 @@ export default async function handler(req, res) {
             c.depot_garantie ? 'dépôt de garantie ' + eur(c.depot_garantie) : null].filter(Boolean).join(', '));
           if (c.echeance && c.echeance < jour) echus.push(p.nom_depose + ' : terme au ' + fr(c.echeance));
           const cl = c.clauses || {};
-          if (d.type_operation === 'vente_immeuble' && cl.droit_preference) preference.push(p.nom_depose + (c.preneur ? ' (' + c.preneur + ')' : ''));
-          if (d.type_operation === 'cession_parts' && cl.changement_controle) controle.push(p.nom_depose + (c.preneur ? ' (' + c.preneur + ')' : ''));
+          // 11/11/2026 — étape B : quand Claude a lu les clauses (après
+          // anonymisation, sur validation de JFD), sa lecture précise ou
+          // écarte le simple repérage du code ; elle ne pose jamais de couleur.
+          const ca = p.lecture.clauses_analyse || null;
+          const resume = (k) => (ca && ca[k] && ca[k].resume ? ' — lu par Claude : ' + ca[k].resume : '');
+          const pref = ca && ca.droit_preference ? ca.droit_preference.present : cl.droit_preference;
+          const ctrl = ca && ca.changement_controle ? ca.changement_controle.present : cl.changement_controle;
+          if (d.type_operation === 'vente_immeuble' && pref) preference.push(p.nom_depose + (c.preneur ? ' (' + c.preneur + ')' : '') + resume('droit_preference'));
+          if (d.type_operation === 'cession_parts' && ctrl) controle.push(p.nom_depose + (c.preneur ? ' (' + c.preneur + ')' : '') + resume('changement_controle'));
+          if (ca && ca.indexation && ca.indexation.present && ca.indexation.resume) lus[lus.length - 1] += ' ; indexation lue par Claude : ' + ca.indexation.resume;
         }
         if (lus.length) poser('bail_lu', { precision: lister(lus) });
         if (partiels.length) poser('bail_partiel', { precision: lister(partiels) });
