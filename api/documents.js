@@ -23,6 +23,7 @@
 //     classer     { document, code, piece, date, autorisation?, societe?, qui }
 //     renommer    { document, code?, piece?, date?, autorisation?, qui }
 //     inventaire  { dossier, groupe?, bac? }
+//     rattacher   { document, piece, qui }   (13/11/2026 — arbitrage humain)
 //
 // `fichiers[]` : { nom, octets, mime?, empreinte } — l'empreinte SHA-256
 // est calculée PAR LE NAVIGATEUR avant l'envoi. Le fichier lui-même ne
@@ -90,6 +91,7 @@ export default async function handler(req, res) {
       case 'renommer':   return await classer(res, corps, { renommage: true });
       case 'lire':       return await lire(res, corps);
       case 'clauses':    return await clauses(res, corps);
+      case 'rattacher':  return await rattacher(res, corps);
       case 'journal_anonymisation': {
         // Ligne rendue par la bibliothèque d'anonymisation (r.journal),
         // inscrite au tableur du Drive. Rien d'autre n'est accepté.
@@ -108,7 +110,7 @@ export default async function handler(req, res) {
       });
       default:
         return res.status(400).json({
-          erreur: 'action attendue : deposer | classer | renommer | lire | inventaire',
+          erreur: 'action attendue : deposer | classer | renommer | lire | clauses | rattacher | inventaire',
         });
     }
   } catch (e) {
@@ -170,12 +172,104 @@ async function lire(res, corps) {
     document: Number(doc.id), nom: doc.nom_depose, statut: lecture.statut,
     nature: lecture.nature ? lecture.nature.code : null, recopiee: Boolean(lecture.recopiee),
   });
+  // 13/11/2026 — rapprochement avec le registre des pièces.
+  const rapprochement = await rapprocher(sql, doc, lecture, qui);
   // 11/11/2026 — étape B : les passages des clauses repérées sont rendus au
   // navigateur (jamais conservés), pour anonymisation puis envoi à Claude
   // sur validation de JFD.
   const extraits = lecture.statut === 'lue' && lecture.nature && lecture.nature.code === 'bail'
     ? extraitsClauses(String(corps.texte ?? '').slice(0, TEXTE_MAX)) : [];
-  return res.status(200).json({ document: Number(doc.id), lecture, extraits });
+  return res.status(200).json({ document: Number(doc.id), lecture, extraits, rapprochement });
+}
+
+// =====================================================================
+// Rapprochement pièce déposée → ligne du registre (13/11/2026)
+// =====================================================================
+//
+// Arbitrages de JFD : la collaboratrice ne touche PAS aux statuts, c'est
+// MARTEAU qui les met à jour (09/11) ; la lecture est comprise dans le
+// dépôt (09/11) ; MARTEAU ne suppose rien et demande un arbitrage humain
+// quand la lecture n'est pas conforme (12/11) ; cet arbitrage, la
+// collaboratrice peut le faire elle-même (13/11).
+//
+// Une seule ligne ouverte correspond à la nature reconnue → « reçue »,
+// posée par la machine. Pièce non reconnue, ou plusieurs lignes possibles
+// → arbitrage humain (action « rattacher »). Pièce reconnue mais absente
+// du registre → rien n'est touché, on le dit.
+
+const OUVERTS = ['demandable', 'demandee', 'relancee'];
+// nature reconnue → libellé de la ligne du registre (api/analyser.js, PIECES)
+const LIGNE_DU_REGISTRE = {
+  titre_propriete:       /^Titre de propriété/,
+  reglement_copro:       /^Règlement de copropriété/,
+  pv_ag_copro:           /^Procès-verbaux d'assemblée/,
+  tableau_amortissement: /actes de prêt/,
+  permis:                /autorisations d'urbanisme/,
+  daact:                 /autorisations d'urbanisme/,
+  dommages_ouvrage:      /dommages-ouvrage/,
+  dpe:                   /diagnostics techniques/,
+  amiante:               /diagnostics techniques/,
+  etat_risques:          /^État des risques/,
+  bail:                  /^Baux en cours/,
+};
+// Natures dont le CONTENU n'est pas encore lu par le code.
+const CONTENU_A_VENIR = new Set(['titre_propriete', 'reglement_copro', 'pv_ag_copro', 'tableau_amortissement',
+  'permis', 'daact', 'dommages_ouvrage', 'dpe', 'amiante', 'etat_risques']);
+
+const marqueDocument = (id) => `marteau:document:${id}`;
+
+async function marquerRecue(sql, dossierId, ligne, docId, qui, mode, mention) {
+  await sql`
+    UPDATE marteau_piece
+       SET statut = 'recue', fichier_url = ${marqueDocument(docId)}, depose_le = now(), depose_par = ${qui.toUpperCase()}
+     WHERE id = ${ligne.id}
+  `;
+  await journaliser(dossierId, qui.toUpperCase(), mode === 'auto' ? 'pièce reçue (rapprochement par MARTEAU)' : 'pièce reçue (rattachée par un collaborateur)', {
+    piece: Number(ligne.id), libelle: ligne.libelle, document: Number(docId), mention: mention || null,
+  });
+}
+
+async function rapprocher(sql, doc, lecture, qui) {
+  const lignes = await sql`
+    SELECT id, libelle, statut, fichier_url FROM marteau_piece
+     WHERE dossier_id = ${doc.dossier_id} AND nature = 'piece'
+     ORDER BY famille, id
+  `;
+  if (lignes.some((l) => l.fichier_url === marqueDocument(doc.id))) {
+    return { statut: 'deja_rattachee', libelle: lignes.find((l) => l.fichier_url === marqueDocument(doc.id)).libelle };
+  }
+  const ouvertes = lignes.filter((l) => OUVERTS.includes(l.statut));
+  const candidats = ouvertes.map((l) => ({ piece: Number(l.id), libelle: l.libelle }));
+  const code = lecture && lecture.statut === 'lue' && lecture.nature ? lecture.nature.code : 'non_reconnue';
+  if (code === 'non_reconnue') return { statut: 'a_arbitrer', motif: 'pièce non reconnue', candidats };
+  const motif = LIGNE_DU_REGISTRE[code];
+  if (!motif) return { statut: 'hors_registre', motif: 'nature reconnue mais non demandée au registre' };
+  const possibles = ouvertes.filter((l) => motif.test(l.libelle));
+  if (possibles.length === 1) {
+    const mention = CONTENU_A_VENIR.has(code) ? 'lecture du contenu à venir' : null;
+    await marquerRecue(sql, doc.dossier_id, possibles[0], doc.id, qui, 'auto', mention);
+    return { statut: 'recue', piece: Number(possibles[0].id), libelle: possibles[0].libelle, mention };
+  }
+  if (possibles.length > 1) return { statut: 'a_arbitrer', motif: 'plusieurs lignes possibles', candidats: possibles.map((l) => ({ piece: Number(l.id), libelle: l.libelle })) };
+  return { statut: 'sans_ligne_ouverte', motif: 'la ligne correspondante est déjà reçue ou absente' };
+}
+
+async function rattacher(res, corps) {
+  const sql = db();
+  const id = Number(corps.document), pieceId = Number(corps.piece);
+  const qui = String(corps.qui ?? '').trim();
+  if (!Number.isInteger(id) || !Number.isInteger(pieceId)) return res.status(400).json({ erreur: 'document et pièce requis' });
+  if (!qui) return res.status(400).json({ erreur: 'qui requis' });
+  const [doc] = await sql`SELECT id, dossier_id FROM marteau_document WHERE id = ${id}`;
+  if (!doc) return res.status(404).json({ erreur: `document ${id} inconnu` });
+  const [ligne] = await sql`
+    SELECT id, libelle, statut FROM marteau_piece
+     WHERE id = ${pieceId} AND dossier_id = ${doc.dossier_id} AND nature = 'piece'
+  `;
+  if (!ligne) return res.status(404).json({ erreur: 'ligne du registre inconnue sur ce dossier' });
+  if (!OUVERTS.includes(ligne.statut)) return res.status(409).json({ erreur: `ligne déjà ${ligne.statut}` });
+  await marquerRecue(sql, doc.dossier_id, ligne, doc.id, qui, 'manuel', null);
+  return res.status(200).json({ statut: 'recue', piece: Number(ligne.id), libelle: ligne.libelle });
 }
 
 // =====================================================================
