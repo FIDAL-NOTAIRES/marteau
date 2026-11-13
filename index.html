@@ -1285,6 +1285,37 @@ async function envoyerClauses(ref, quiDem, id, bouton) {
     bouton.remove();
   } catch (err) { zone.textContent = 'Échec : ' + err.message; bouton.disabled = false; bouton.textContent = avant; }
 }
+// 13/11/2026 — rapprochement avec le registre : MARTEAU pose « reçue » lui-même ;
+// sinon la collaboratrice rattache la pièce à la bonne ligne (arbitrage humain).
+function texteRapprochement(id, r) {
+  if (!r) return '';
+  if (r.statut === 'recue') return ' — <b>reçue</b> au registre : « ' + e(r.libelle) + ' »' + (r.mention ? ' (' + e(r.mention) + ')' : '');
+  if (r.statut === 'deja_rattachee') return ' — déjà rattachée à « ' + e(r.libelle) + ' »';
+  if (r.statut === 'hors_registre') return ' — non demandée au registre, rangée sans changer de statut';
+  if (r.statut === 'sans_ligne_ouverte') return ' — ' + e(r.motif);
+  if (r.statut === 'a_arbitrer') {
+    if (!(r.candidats || []).length) return ' — ' + e(r.motif) + ' : aucune ligne ouverte au registre';
+    return ' — <span class="att">' + e(r.motif) + ', à rattacher :</span> <select id="ratt-' + id + '">'
+      + r.candidats.map((c) => '<option value="' + c.piece + '">' + e(c.libelle) + '</option>').join('')
+      + '</select> <button class="sec" type="button" onclick="rattacherPiece(' + id + ', this)">Rattacher</button>'
+      + ' <span id="ratt-res-' + id + '"></span>';
+  }
+  return '';
+}
+async function rattacherPiece(id, bouton) {
+  const choix = document.getElementById('ratt-' + id);
+  const zone = document.getElementById('ratt-res-' + id);
+  if (!choix) return;
+  bouton.disabled = true;
+  try {
+    const r = await fetch(DOCUMENTS, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'rattacher', document: Number(id), piece: Number(choix.value), qui: (((document.getElementById('collab') || {}).value || (document.getElementById('assoc') || {}).value || 'JFD').trim().toUpperCase()) }) });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.erreur || 'rattachement refusé');
+    choix.disabled = true;
+    zone.innerHTML = '<b>reçue</b> au registre. Cliquez sur « Actualiser le dossier » pour mettre les voyants à jour.';
+  } catch (err) { zone.textContent = 'Échec : ' + err.message; bouton.disabled = false; }
+}
 async function deposerFichiers(ref, quiDem, fichiers) {
   if (!fichiers.length) return;
   const suivi = document.getElementById('depot-suivi');
@@ -1316,7 +1347,8 @@ async function deposerFichiers(ref, quiDem, fichiers) {
       if (!r2.ok) throw new Error(d2.erreur || 'lecture refusée');
       const l = d2.lecture || {};
       if ((d2.extraits || []).length) clausesEnAttente[id] = { nom: f.name, extraits: d2.extraits, nature_bail: (l.champs || {}).nature_bail || null };
-      lignes[i] = e(f.name) + ' : ' + e(l.nature ? l.nature.libelle : '—') + (l.statut !== 'lue' ? ' (' + e(STATUT_LECTURE[l.statut] || l.statut) + ')' : '');
+      lignes[i] = e(f.name) + ' : ' + e(l.nature ? l.nature.libelle : '—') + (l.statut !== 'lue' ? ' (' + e(STATUT_LECTURE[l.statut] || l.statut) + ')' : '')
+        + texteRapprochement(id, d2.rapprochement);
     } catch (err) { lignes[i] = e(f.name) + ' : échec — ' + e(err.message); }
     montrer();
   }
