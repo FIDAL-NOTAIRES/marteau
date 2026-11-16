@@ -1378,6 +1378,125 @@ function surveillerActu(le) {
   }, 60 * 1000);
 }
 
+// =====================================================================
+// 16/11/2026 — COURRIELS EN BROUILLON OUTLOOK, SIGNÉS (scénario du 18/11)
+// Même mécanisme que FUSION et ARGOSAdmin : un .eml marqué « non envoyé »,
+// téléchargé, qu'Outlook ouvre prêt à partir ; signature commune lue dans
+// CARNET (modèle du dépôt connexion), à l'identique. Sans signature complète,
+// aucun brouillon. MARTEAU n'envoie toujours rien lui-même (mémo § 10.4).
+// =====================================================================
+const ACCUEIL_COURRIEL = 'accueil@fidal.notaires.fr';
+const CARNET_M = { statut: 'non', personnes: [], erreur: null };
+let DERNIER_ETAT = null;
+async function carnetLire(forcer) {
+  if (CARNET_M.statut === 'charge' && !forcer) return;
+  try {
+    const jeton = window.FidalAcces && FidalAcces.jeton ? await FidalAcces.jeton() : null;
+    if (!jeton) throw new Error('connexion Google du matin absente');
+    const r = await fetch('/api/carnet', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ jeton }) });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.erreur || ('HTTP ' + r.status));
+    CARNET_M.personnes = Array.isArray(d.personnes) ? d.personnes : []; CARNET_M.statut = 'charge'; CARNET_M.erreur = null;
+  } catch (err) { CARNET_M.statut = 'echec'; CARNET_M.erreur = err.message; }
+}
+function personneParInitiales(ini, associe) {
+  const i = String(ini || '').trim().toUpperCase(); if (!i) return null;
+  return CARNET_M.personnes.find((p) => String(p.initiales || '').toUpperCase() === i && (!associe || p.categorie === 'associe'))
+    || CARNET_M.personnes.find((p) => String(p.initiales || '').toUpperCase() === i) || null;
+}
+const COULEURS_SIG = ['#33838B', '#0F2238', '#657D96', '#E3CC7A', '#82AA98', '#FF982D', '#6DD5DC'];
+function telSig(v) {
+  const t = String(v || '').trim(), d = t.replace(/\D/g, '');
+  if (/^\+33/.test(t.replace(/\s/g, '')) && d.length === 11) return '+33 ' + d.charAt(2) + ' ' + d.slice(3).replace(/(\d{2})(?=\d)/g, '$1 ');
+  if (d.length === 10 && d.charAt(0) === '0') return d.replace(/(\d{2})(?=\d)/g, '$1 ');
+  return t;
+}
+const casseSig = (t) => String(t || '').toLowerCase().replace(/(^|[\s\-'’])([a-zà-ÿ])/g, (m, a, b) => a + b.toUpperCase());
+function signatureHtml(p) {
+  const s = p.sig || {};
+  if (s.sans_signature) return '';
+  const seg = "font-family:'Segoe UI',sans-serif;color:#0F2238";
+  const couleur = COULEURS_SIG.includes(s.couleur) ? s.couleur : COULEURS_SIG[0];
+  const q = p.categorie === 'associe' ? 'Notaire Associé' : s.fonction === 'Notaire salarié' ? 'Notaire' : (s.fonction && s.fonction !== 'Autre' ? s.fonction : '');
+  const tel = telSig(s.telephone || s.site_tel);
+  const adresse = s.site_adresse ? e(s.site_adresse) + ' –&nbsp;' + e([s.site_cp, casseSig(p.site)].filter(Boolean).join(' ')) : '';
+  const lig = (c, t) => '<p style="margin:0 0 0 15px;font-size:' + t + ';line-height:115%;' + seg + '">' + c + '</p>';
+  return '<table border="0" cellspacing="0" cellpadding="0" width="715" style="width:715px;border-collapse:collapse"><tr>'
+    + '<td width="176" valign="middle" style="width:176px;border-right:1px solid #0F2238;padding:0 7px;vertical-align:middle"><p style="margin:0"><img src="https://connexion-omega.vercel.app/signature/logo-fidal-notaires.png" width="145" height="72" alt="FIDAL Notaires" style="display:block;width:145px;height:72px;border:0"></p></td>'
+    + '<td width="325" valign="middle" style="width:325px;border-right:1px solid #0F2238;padding:0 7px;vertical-align:middle"><p style="margin:0;font-size:8pt;' + seg + '">&nbsp;</p>'
+    + '<p style="margin:0 0 4px 15px;font-size:16pt;font-family:Georgia,serif;color:' + couleur + '">' + e([p.prenom, p.nom].filter(Boolean).join(' ')) + '</p>'
+    + (q ? lig(e(q), '10pt') : '') + (s.ligne2 ? lig(e(s.ligne2), '10pt') : '') + lig('&nbsp;', '9pt') + (tel ? lig(e(tel), '9pt') : '')
+    + (p.courriel ? '<p style="margin:0 0 0 15px;font-size:9pt;font-family:\'Segoe UI\',sans-serif"><a href="mailto:' + e(p.courriel) + '" style="color:#33838B;text-decoration:underline">' + e(p.courriel) + '</a></p>' : '')
+    + (adresse ? lig(adresse, '9pt') : '') + '<p style="margin:0;font-size:8pt;' + seg + '">&nbsp;</p></td>'
+    + '<td width="213" valign="middle" style="width:213px;padding:0 7px;vertical-align:middle"><p style="margin:0"><img src="https://connexion-omega.vercel.app/signature/logo-notaires-de-france.png" width="78" height="74" alt="Notaires de France" style="display:block;width:78px;height:74px;border:0"></p></td></tr></table>'
+    + '<p style="margin:0;font-size:7pt;' + seg + '">&nbsp;</p><p style="margin:0;font-size:7pt;' + seg + '">&nbsp;</p>'
+    + '<p style="margin:0;text-align:justify;font-size:8pt;font-family:\'Segoe UI\',sans-serif;color:#1A1A1A"><b>Confidentiel&nbsp;: </b>Cet e-mail et ses pièces jointes contiennent des informations confidentielles protégées par le secret professionnel. S\'il ne vous est pas destiné, nous vous remercions de le détruire immédiatement, sans le copier ni révéler ou transmettre son contenu à quiconque.</p>';
+}
+// la signature est celle de l'associé en charge du dossier, lue dans CARNET, complète — sinon rien
+async function signataire(doss) {
+  if (CARNET_M.statut !== 'charge' || !personneParInitiales(doss.associe, true)) await carnetLire(true);
+  const p = personneParInitiales(doss.associe, true);
+  if (p && p.sig) return p;
+  window.alert('Brouillon non produit — signature non conforme : ' + (CARNET_M.statut === 'echec' ? 'CARNET n\'a pas répondu (' + CARNET_M.erreur + ')'
+    : !p ? 'l\'associé en charge (' + (doss.associe || '?') + ') n\'est pas trouvé dans CARNET' : 'CARNET ne transmet pas les champs de la signature') + '.');
+  return null;
+}
+const b64 = (t) => { const o = new TextEncoder().encode(t); let b = ''; for (let i = 0; i < o.length; i += 0x8000) b += String.fromCharCode.apply(null, o.subarray(i, i + 0x8000)); return btoa(b); };
+const plie = (x) => x.replace(/.{1,76}/g, '$&\r\n');
+function htmlMessage(corps, signe) {
+  return '<!DOCTYPE html><html><head><meta charset="utf-8"></head><body style="font-family:\'Segoe UI\',sans-serif;font-size:10pt;color:#0F2238">' + corps + signatureHtml(signe) + '</body></html>';
+}
+function texteEnHtml(t) {   // le texte rédigé par MARTEAU : paragraphes séparés par une ligne vide
+  return String(t || '').split(/\n\s*\n/).map((b) => '<p style="margin:0 0 10pt">' + e(b).replace(/\n/g, '<br>') + '</p>').join('');
+}
+function emlTexte(a, cc, objet, html, jointes) {
+  const tete = ['X-Unsent: 1', 'To: ' + (a || ''), cc ? 'Cc: ' + cc : null, 'Subject: =?UTF-8?B?' + b64(objet) + '?=', 'MIME-Version: 1.0'].filter((x) => x !== null);
+  if (!jointes || !jointes.length) return tete.concat(['Content-Type: text/html; charset=UTF-8', 'Content-Transfer-Encoding: base64', '', plie(b64(html))]).join('\r\n');
+  const borne = 'marteau-' + Math.random().toString(36).slice(2);
+  const parts = ['--' + borne, 'Content-Type: text/html; charset=UTF-8', 'Content-Transfer-Encoding: base64', '', plie(b64(html))];
+  jointes.forEach((j) => parts.push('--' + borne, 'Content-Type: application/octet-stream; name="=?UTF-8?B?' + b64(j.nom) + '?="',
+    'Content-Disposition: attachment; filename="=?UTF-8?B?' + b64(j.nom) + '?="', 'Content-Transfer-Encoding: base64', '', plie(b64(j.contenu))));
+  parts.push('--' + borne + '--', '');
+  return tete.concat(['Content-Type: multipart/mixed; boundary="' + borne + '"', '', ...parts]).join('\r\n');
+}
+function telechargerEml(nom, eml) {
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([eml], { type: 'message/rfc822' }));
+  a.download = nom.replace(/[\\/:*?"<>|]/g, '') + '.eml'; document.body.appendChild(a); a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+}
+const ccCollab = (doss) => { const c = personneParInitiales(doss.collaborateur); return c && c.courriel ? c.courriel : ''; };
+async function brouillonDemande(q) {
+  const doss = DERNIER_ETAT.dossier, signe = await signataire(doss); if (!signe) return;
+  const html = htmlMessage(texteEnHtml(String(q.corps).replace(/\n*Bien cordialement,\s*$/, '\n\nBien cordialement,')), signe);
+  telechargerEml(doss.reference + ' - ' + q.titre, emlTexte('', ccCollab(doss), q.objet, html));
+}
+async function courrielAssistante(ref) {
+  const d = DERNIER_ETAT, doss = d.dossier, signe = await signataire(doss); if (!signe) return;
+  const STATUT = { demandable: 'à demander', a_saisir: 'à saisir au logiciel métier', demandee: 'demandée', relancee: 'relancée' };
+  const DEST = { client: 'client', mairie: 'mairie', publicite_fonciere: 'publicité foncière', prefecture_ars: 'préfecture / ARS', expert_comptable: 'expert-comptable' };
+  const ouvertes = (d.registre || []).filter((x) => STATUT[x.statut]);
+  if (!ouvertes.length) { window.alert('Aucune tâche ouverte sur ce dossier.'); return; }
+  // les demandes rédigeables sont préparées (sans rien écrire) et jointes, chacune en brouillon prêt à partir
+  let demandes = [];
+  const ids = ouvertes.filter((x) => x.statut === 'demandable').map((x) => x.id);
+  if (ids.length) { try { demandes = (await posterDossier('preparer', { dossier: ref, pieces: ids, qui: (($('#collab') && $('#collab').value) || ($('#assoc') && $('#assoc').value) || doss.collaborateur || doss.associe || 'JFD').trim().toUpperCase() })).demandes || []; } catch (err) { window.alert(err.message); return; } }
+  const cc = ccCollab(doss);
+  const jointes = demandes.map((q) => ({ nom: doss.reference + ' - ' + q.titre + '.eml',
+    contenu: emlTexte('', '', q.objet, htmlMessage(texteEnHtml(q.corps), signe)) }));
+  const parDest = {}; ouvertes.forEach((x) => (parDest[DEST[x.destinataire_type] || x.destinataire_type || 'autre'] ??= []).push(x));
+  const lien = location.origin + location.pathname + '#' + encodeURIComponent(doss.reference);
+  const soc = doss.denomination || doss.siren;
+  let corps = '<p style="margin:0 0 10pt">Bonjour,</p><p style="margin:0 0 10pt">Dans le dossier ' + e(doss.reference) + ' — ' + e(soc) + ', voici les tâches à traiter :</p>';
+  Object.entries(parDest).forEach(([dest, ls]) => {
+    corps += '<p style="margin:0 0 4pt"><b>' + e(dest.charAt(0).toUpperCase() + dest.slice(1)) + '</b></p><ul style="margin:0 0 10pt;padding-left:22px">'
+      + ls.map((x) => '<li style="margin:0 0 3pt">' + e(x.libelle) + ' — <i>' + e(STATUT[x.statut]) + '</i></li>').join('') + '</ul>';
+  });
+  if (jointes.length) corps += '<p style="margin:0 0 10pt">Les demandes déjà rédigées sont jointes (' + jointes.length + ') : ouvrez chaque pièce jointe, elle s\'affiche prête à envoyer. Une fois envoyées, marquez-les « demandées » dans MARTEAU.</p>';
+  corps += '<p style="margin:0 0 10pt">Votre liste de tâches dans MARTEAU : <a href="' + e(lien) + '" style="color:#33838B">ouvrir le dossier ' + e(doss.reference) + '</a></p><p style="margin:0 0 10pt">Merci d\'avance.</p>';
+  const a = cc || ACCUEIL_COURRIEL;
+  telechargerEml(doss.reference + ' - tâches assistante', emlTexte(a, '', 'MARTEAU — ' + doss.reference + ' — ' + soc + ' — tâches (' + ouvertes.length + ')', htmlMessage(corps, signe), jointes));
+}
+
 async function afficherEtat(ref) {
   montrerEcran('dossier', ref);
   $('#titre-dossier').textContent = 'Dossier ' + ref;
@@ -1386,6 +1505,7 @@ async function afficherEtat(ref) {
   const r = await fetch(DOSSIER + '?dossier=' + encodeURIComponent(ref));
   const d = await r.json();
   if (!r.ok) { $('#etat-res').innerHTML = '<div class="alerte">' + e(d.erreur) + '</div>'; return; }
+  DERNIER_ETAT = d;
   $('#titre-dossier').textContent = 'Dossier ' + d.dossier.reference + ' — ' + (d.dossier.denomination || d.dossier.siren);
 
   // Les jauges du haut de page prennent les valeurs réelles.
@@ -1485,6 +1605,7 @@ async function afficherEtat(ref) {
       }).join('')
     + '</tbody></table>'
     + '<div class="rang" style="margin-top:10px"><div style="flex:0 0 auto"><button class="sec" id="preparer">Préparer les demandes</button></div>'
+    + '<div style="flex:0 0 auto"><button class="sec" id="assistante">Courriel à l\'assistante</button></div>'
     + '<div style="flex:0 0 auto"><button class="sec" id="saisir">État hypothécaire saisi au logiciel métier</button></div></div>'
     + '<div id="demandes-res" style="margin-top:10px"></div>'
     + '<p class="att" style="margin:6px 0 0">Les pièces « à demander » sont déduites des voyants jaunes. Le K-bis n\'y figure pas : l\'étude le demande elle-même. '
@@ -1625,7 +1746,7 @@ async function afficherEtat(ref) {
         + '<b>' + e(q.titre) + '</b> <span class="att">— objet : ' + e(q.objet) + '</span>'
         + '<pre style="white-space:pre-wrap;font-family:inherit;color:#fff;font-size:13px">' + e(q.corps) + '</pre>'
         + '<button class="sec copier" data-corps="' + e(q.corps) + '">Copier le texte</button> '
-        + '<a href="mailto:?subject=' + encodeURIComponent(q.objet) + '&body=' + encodeURIComponent(q.corps) + '" style="margin-left:8px">Ouvrir dans le courrielleur</a>'
+        + '<button class="sec brouillon" data-i="' + d.demandes.indexOf(q) + '" style="margin-left:8px">Brouillon Outlook signé</button>'
         + '</div>').join('');
       if (d.ecartees.length) hh += '<p class="att">Non rédigées : ' + d.ecartees.map((x) => e(x.libelle) + ' (' + e(x.motif) + ')').join(' · ') + '</p>';
       hh += '<p><button id="marquer">Marquer comme demandées — une fois envoyées</button></p>';
@@ -1633,12 +1754,14 @@ async function afficherEtat(ref) {
       $('#demandes-res').querySelectorAll('.copier').forEach((b) => b.addEventListener('click', async () => {
         try { await navigator.clipboard.writeText(b.dataset.corps); b.textContent = 'Copié ✓'; } catch (err) { /* le texte est affiché juste au-dessus */ }
       }));
+      $('#demandes-res').querySelectorAll('.brouillon').forEach((b) => b.addEventListener('click', () => brouillonDemande(d.demandes[+b.dataset.i])));
       $('#marquer').addEventListener('click', async () => {
         try { await appelDem('marquer', pieces); await afficherEtat(ref); }
         catch (err) { window.alert(err.message); }
       });
     } catch (err) { $('#demandes-res').innerHTML = '<div class="alerte">' + e(err.message) + '</div>'; }
   });
+  $('#assistante').addEventListener('click', () => courrielAssistante(ref));
   $('#saisir').addEventListener('click', async () => {
     const pieces = cochees('etat_hypothecaire');
     if (!pieces.length) { $('#demandes-res').innerHTML = '<div class="alerte">Cochez l\'état hypothécaire.</div>'; return; }
