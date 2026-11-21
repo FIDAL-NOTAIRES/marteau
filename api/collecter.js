@@ -376,6 +376,15 @@ export default async function handler(req, res) {
         `;
       }
 
+      // 21/11/2026 (migration 015) — procédure collective relevée au BODACC :
+      // réécrite à chaque collecte réussie (NULL quand aucune annonce), pour
+      // qu'une procédure close ou disparue ne reste pas affichée.
+      await sql`
+        UPDATE marteau_societe
+           SET procedure_collective = ${l.procedure_collective ? JSON.stringify(l.procedure_collective) : null}::jsonb
+         WHERE dossier_id = ${d.id} AND siren = ${d.siren_tete}
+      `;
+
       // Dénominations successives de la société auditée : c'est cette
       // liste qu'on porte au fichier immobilier, pas seulement le nom
       // du jour.
