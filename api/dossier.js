@@ -28,6 +28,7 @@
 //     lister    { clos? }
 //     lire      { dossier }
 //     lever     { dossier, reserve, motif, qui, code? }
+//     compteur  { dossier, qui, geste, info?, motif?, valeur?, code? }   (21/11/2026, migration 014)
 //     preparer  { dossier, pieces[], qui }
 //     marquer   { dossier, pieces[], qui }
 //     saisir    { dossier, pieces[], qui }
@@ -305,6 +306,7 @@ export default async function handler(req, res) {
         return await lire(res, ref);
       }
       case 'lever':    return await lever(res, corps);
+      case 'compteur': return await compteur(res, corps);
       case 'preparer':
       case 'marquer':
       case 'saisir':   return await pieces(res, corps, action);
@@ -548,7 +550,7 @@ async function lire(res, ref) {
 
   const [d] = await sql`
     SELECT id, reference, siren_tete, denomination_tete, associe_en_charge,
-           collaborateur, ouvert_le, clos_le, risques,
+           collaborateur, ouvert_le, clos_le, risques, compteur,
            type_operation, delai_audit_jours, date_signature_prevue, numero_kivia
       FROM marteau_dossier WHERE reference = ${ref}
   `;
@@ -665,6 +667,8 @@ async function lire(res, ref) {
       // 09/11/2026 — informations d'ouverture (migration 012).
       type_operation: d.type_operation ?? null,
       numero_kivia: d.numero_kivia ?? null,
+      // 21/11/2026 — gestes du compteur de justificatifs (migration 014).
+      compteur: d.compteur && typeof d.compteur === 'object' ? d.compteur : {},
       delai_audit_jours: d.delai_audit_jours ?? null,
       echeance_audit: echeanceAudit(d.ouvert_le, d.delai_audit_jours),
       alerte_delai: d.clos_le ? null : alerteDelai({
@@ -782,6 +786,109 @@ async function lever(res, { dossier, reserve, motif, qui, code }) {
     definitif_possible: restantes === 0,
     journal_tete: tete,
   });
+}
+
+// =====================================================================
+// compteur — gestes du compteur de justificatifs (21/11/2026, migration 014)
+// =====================================================================
+//
+//   { action:'compteur', dossier, qui, geste, info?, libelle?, grave?, motif?, valeur?, pourcentage?, graves?, code? }
+//
+// geste : valider | lever | annuler            (une information : `info` = son identifiant)
+//         seuil | lever-seuil                  (administrateur : sous code)
+//         demander | relancer                  (collaborateur)
+//         accorder | refuser                   (notaire en charge : sous code)
+//
+// MARTEAU n'a pas de connexion par personne : ce qui est réservé au notaire
+// ou à l'administrateur passe SOUS CODE, le même que la levée des réserves
+// (MARTEAU_CODE_LEVEE). Un code absent de la configuration refuse (503).
+const COMPTEUR_SOUS_CODE = new Set(['seuil', 'lever-seuil', 'accorder', 'refuser']);
+async function compteur(res, { dossier, qui, geste, info, libelle, grave, motif, valeur, pourcentage, graves, code }) {
+  if (!dossier || !geste) return res.status(400).json({ erreur: 'dossier et geste requis' });
+  if (!qui) return res.status(400).json({ erreur: 'qui est requis' });
+  const sql = db();
+  const [d] = await sql`SELECT id, reference, associe_en_charge, clos_le, compteur FROM marteau_dossier WHERE reference = ${dossier}`;
+  if (!d) return res.status(404).json({ erreur: `dossier ${dossier} inconnu` });
+  if (d.clos_le) return res.status(409).json({ erreur: 'dossier clos : le compteur est figé' });
+
+  const C = d.compteur && typeof d.compteur === 'object' ? { ...d.compteur } : {};
+  C.main = { ...(C.main || {}) }; C.levees = { ...(C.levees || {}) };
+  const m = String(motif ?? '').trim();
+  const exigerMotif = () => m.length >= 5;
+  let par = majuscule(qui);
+
+  const sousCode = COMPTEUR_SOUS_CODE.has(geste) || (geste === 'lever' && grave)
+    || (geste === 'annuler' && info && C.levees[info] && C.levees[info].grave);
+  if (sousCode) {
+    const attendu = process.env.MARTEAU_CODE_LEVEE;
+    if (!attendu) return res.status(503).json({ erreur: 'geste sous code impossible — MARTEAU_CODE_LEVEE non configurée sur le projet' });
+    if (String(code ?? '') !== attendu) {
+      await journaliser(d.id, par, 'compteur — geste refusé, code invalide', { geste });
+      return res.status(403).json({ erreur: 'code invalide' });
+    }
+    par = d.associe_en_charge;
+  }
+
+  const le = new Date().toISOString();
+  let quoi, detail;
+  switch (geste) {
+    case 'valider':
+    case 'lever': {
+      if (!info) return res.status(400).json({ erreur: 'info requise' });
+      if (!exigerMotif()) return res.status(400).json({ erreur: 'un motif est requis — il est journalisé' });
+      const boite = geste === 'valider' ? C.main : C.levees;
+      boite[String(info)] = { motif: m, par, le, libelle: String(libelle ?? '').slice(0, 400), grave: Boolean(grave), declenchee_par: majuscule(qui) };
+      quoi = geste === 'valider' ? 'compteur — information validée à la main' : 'compteur — divergence levée';
+      detail = { info, libelle: String(libelle ?? '').slice(0, 400), motif: m, grave: Boolean(grave) };
+      break;
+    }
+    case 'annuler': {
+      if (!info) return res.status(400).json({ erreur: 'info requise' });
+      const etait = C.main[info] || C.levees[info];
+      if (!etait) return res.status(404).json({ erreur: 'aucun geste à annuler sur cette information' });
+      delete C.main[info]; delete C.levees[info];
+      quoi = 'compteur — geste annulé'; detail = { info, libelle: etait.libelle ?? null };
+      break;
+    }
+    case 'seuil': {
+      const v = Number(valeur);
+      if (!(v >= 50 && v <= 100)) return res.status(400).json({ erreur: 'seuil attendu entre 50 et 100' });
+      detail = { avant: C.seuil ?? 85, apres: Math.round(v) }; C.seuil = Math.round(v);
+      quoi = 'compteur — seuil du rapport client modifié';
+      break;
+    }
+    case 'lever-seuil': {
+      if (!exigerMotif()) return res.status(400).json({ erreur: 'un motif est requis — il est journalisé' });
+      C.seuilLeve = { motif: m, par, le, pc: pourcentage ?? null };
+      quoi = 'compteur — blocage du rapport client levé'; detail = { motif: m, pourcentage: pourcentage ?? null };
+      break;
+    }
+    case 'demander':
+      C.accord = { statut: 'demande', le, par, pc: pourcentage ?? null, graves: Number(graves) || 0 };
+      quoi = 'compteur — accord du notaire demandé'; detail = { pourcentage: pourcentage ?? null, notaire: d.associe_en_charge };
+      break;
+    case 'relancer':
+      if (!C.accord || C.accord.statut !== 'demande') return res.status(409).json({ erreur: 'aucune demande d\u2019accord en attente' });
+      C.accord = { ...C.accord, relanceLe: le };
+      quoi = 'compteur — notaire relancé'; detail = { pourcentage: pourcentage ?? null };
+      break;
+    case 'accorder':
+    case 'refuser': {
+      const oui = geste === 'accorder';
+      if (!oui && !exigerMotif()) return res.status(400).json({ erreur: 'un motif de refus est requis' });
+      C.accord = { ...(C.accord || {}), statut: oui ? 'accorde' : 'refuse', decideLe: le, decidePar: par, motif: oui ? null : m, pc: pourcentage ?? null, graves: Number(graves) || 0 };
+      quoi = oui ? 'compteur — sortie du rapport client autorisée' : 'compteur — sortie du rapport client refusée';
+      detail = { pourcentage: pourcentage ?? null, motif: oui ? null : m };
+      break;
+    }
+    default:
+      return res.status(400).json({ erreur: 'geste inconnu' });
+  }
+
+  await sql`UPDATE marteau_dossier SET compteur = ${JSON.stringify(C)}::jsonb WHERE id = ${d.id}`;
+  await journaliser(d.id, par, quoi, { ...detail, declenchee_par: majuscule(qui) });
+  const [{ tete }] = await sql`SELECT marteau_journal_tete() AS tete`;
+  return res.status(200).json({ dossier: d.reference, compteur: C, journal_tete: tete });
 }
 
 // =====================================================================
