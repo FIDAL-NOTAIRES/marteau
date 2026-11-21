@@ -109,6 +109,9 @@
   .cpt .cpt-t b { color: #0F2238; font-weight: 600; }
   .cpt-past { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin: 0 3px 0 0; }
   .cpt[data-cpt] { cursor: pointer; }
+  .cpt-g { margin-left: 6px; padding: 1px 7px; border: 1px solid #c5ccd6; border-radius: 4px; background: #fff; color: #33838B; font: inherit; font-size: 12px; cursor: pointer; }
+  .cpt-g:hover { background: #eef6f7; }
+  #rapport-client:disabled { opacity: .45; cursor: not-allowed; }
   .cpt-listes { margin: 8px 0 0; padding: 8px 12px; border: 1px solid #dde2e8; border-radius: 6px; background: #fff; font-size: 13px; font-weight: 400; }
   .cpt-listes h5 { margin: 8px 0 4px; font-size: 12px; letter-spacing: .4px; text-transform: uppercase; color: #33838B; }
   .cpt-listes h5:first-child { margin-top: 0; }
@@ -631,8 +634,9 @@
       children: [new Paragraph({
         alignment: AlignmentType.RIGHT,
         children: [t((doss.denomination || '') + ' · ' + (doss.reference || ''), { size: 15, color: COUL.gris })],
-      })],
+      })].concat(options.interne ? [new Paragraph({ alignment: AlignmentType.CENTER, children: [t('DOCUMENT INTERNE — NE PAS DIFFUSER', { size: 17, bold: true, color: 'A01040' })] })] : []),
     });
+    const teteUne = options.interne ? new Header({ children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [t('DOCUMENT INTERNE — NE PAS DIFFUSER', { size: 17, bold: true, color: 'A01040' })] })] }) : null;
 
     return new Document({
       creator: 'MARTEAU — FIDAL Notaires',
@@ -646,28 +650,28 @@
       },
       sections: [{
         properties: { page: { size: { width: 11906, height: 16838 }, margin: { top: 1134, bottom: 1134, left: 1134, right: 1134 } }, titlePage: true },
-        headers: { default: tete },
+        headers: teteUne ? { default: tete, first: teteUne } : { default: tete },
         footers: { default: pied, first: new Footer({ children: [new Paragraph({ children: [] })] }) },
         children: corps,
       }],
     });
   }
 
-  function nomFichier(d) {
+  function nomFichier(d, options = {}) {
     const doss = d.dossier || {};
     const nom = String(doss.denomination || doss.siren || 'dossier').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^A-Za-z0-9]+/g, '_').replace(/^_|_$/g, '');
     const jour = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-    return 'Rapport_audit_' + (doss.reference || '') + '_' + nom + '_' + jour + '.docx';
+    return 'Rapport_audit_' + (doss.reference || '') + '_' + nom + '_' + jour + (options.interne ? '_interne' : options.client ? '_client' : '') + '.docx';
   }
 
   // Dans le navigateur : fabrique le fichier et le télécharge.
-  async function telechargerRapport(d) {
+  async function telechargerRapport(d, options = {}) {
     if (!racine.docx) throw new Error('bibliothèque Word non chargée');
-    const doc = construireRapport(racine.docx, d);
+    const doc = construireRapport(racine.docx, d, options);
     const blob = await racine.docx.Packer.toBlob(doc);
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = url; a.download = nomFichier(d);
+    a.href = url; a.download = nomFichier(d, options);
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 4000);
     return a.download;
@@ -716,16 +720,24 @@ const CPT_COUL = { canard: '#33838B', orange: '#FF982D', carmin: '#A01040', gris
 const CPT_HORS = ['identite_absorbee'];
 const CPT_DIVERGENCE = /divergence|discordance|ecart/;
 function compteurDossier(d) {
-  const c = { total: 0, ok: 0, sans: 0, incomplet: 0, divergence: 0, grave: 0, infos: [] };
+  // 21/11/2026 (lot 7) : les gestes enregistrés (migration 014) — information VALIDÉE À LA MAIN, divergence LEVÉE —
+  // comptent comme justifiés, à part (« main »). L'identifiant d'une information : voyant | code de phrase | rang.
+  const K = (d.dossier && d.dossier.compteur) || {}, main = K.main || {}, levees = K.levees || {}, vus = {};
+  const c = { total: 0, ok: 0, main: 0, sans: 0, incomplet: 0, divergence: 0, grave: 0, infos: [] };
   (d.familles || []).forEach((f) => (f.voyants || []).forEach((v) => {
     if (CPT_HORS.includes(v.code)) return;
     c.total++;
-    const etatInfo = v.couleur === 'canard' ? 'ok' : v.couleur === 'jaune' ? 'sans' : v.couleur === 'carmin' ? 'grave'
+    const base = (v.voyant || f.numero) + '|' + (v.code || ''); vus[base] = (vus[base] || 0) + 1;
+    const id = base + '|' + vus[base];
+    const nature = v.couleur === 'canard' ? 'ok' : v.couleur === 'jaune' ? 'sans' : v.couleur === 'carmin' ? 'grave'
       : CPT_DIVERGENCE.test(v.code || '') ? 'divergence' : 'incomplet';
+    const geste = nature === 'ok' ? null : (nature === 'grave' || nature === 'divergence') ? levees[id] : main[id];
+    const etatInfo = geste ? 'main' : nature;
     c[etatInfo]++;
-    c.infos.push({ etat: etatInfo, famille: f.numero, familleLib: f.libelle, texte: v.texte });
+    c.infos.push({ id, etat: etatInfo, nature, geste: geste || null, famille: f.numero, familleLib: f.libelle, texte: v.texte });
   }));
   c.nonAnalyse = !c.total;
+  c.ok += c.main;
   c.orange = c.sans + c.incomplet + c.divergence; c.carmin = c.grave;
   c.incomplets = c.orange + c.carmin; c.divergences = c.divergence + c.grave;
   c.pc = c.total ? Math.floor(100 * c.ok / c.total) : 0;
@@ -747,15 +759,17 @@ function compteurHtml(c, taille) {
   const t = c.incomplets ? '<b>' + pl(c.incomplets, 'information incomplète', 'informations incomplètes') + '</b>'
       + (c.divergences ? ', dont ' + pl(c.divergences, 'divergence', 'divergences') + (c.grave ? ' (<span class="cpt-past" style="background:' + CPT_COUL.carmin + '"></span>' + c.grave + ')' : '') : '')
     : '<b>tout est justifié</b>';
-  return '<div class="cpt" data-cpt="1" title="Ouvrir ou fermer le détail des justificatifs">' + camembertSvg(c, taille) + '<span class="cpt-t">Justificatifs du dossier : ' + t + ' <a href="#" style="margin-left:6px">détail</a></span></div>';
+  const tm = c.main ? ' · ' + pl(c.main, 'validée à la main', 'validées à la main') : '';
+  return '<div class="cpt" data-cpt="1" title="Ouvrir ou fermer le détail des justificatifs">' + camembertSvg(c, taille) + '<span class="cpt-t">Justificatifs du dossier : ' + t + tm + ' <a href="#" style="margin-left:6px">détail</a></span></div>';
 }
 
 // LES DEUX LISTES (lot 3, 21/11/2026) : un clic sur le compteur ouvre les informations SANS PIÈCE (par famille, les
 // familles qui en comptent le plus en tête) et les SOURCES DIVERGENTES (les graves d'abord). Jamais le nom d'une
-// couleur : une pastille. Lecture seule pour l'instant — la validation à la main et la levée d'une divergence
-// demandent une table en base et viennent dans un lot suivant.
-function compteurListesHtml(c) {
+// couleur : une pastille. Depuis le lot 7 (21/11/2026, migration 014) : « Valider à la main », « Lever » et
+// « Annuler » sur chaque ligne, motif obligatoire, inscrits au journal ; divergence grave : sous code.
+function compteurListesHtml(c, clos) {
   const past = (coul) => '<span class="cpt-past" style="background:' + CPT_COUL[coul] + '"></span>';
+  const bouton = (i, geste, lib) => clos ? '' : ' <button class="cpt-g" type="button" data-geste="' + geste + '" data-info="' + e(i.id) + '">' + lib + '</button>';
   const sans = c.infos.filter((i) => i.etat === 'sans' || i.etat === 'incomplet');
   const fam = new Map();
   sans.forEach((i) => { if (!fam.has(i.famille)) fam.set(i.famille, { lib: i.familleLib, infos: [] }); fam.get(i.famille).infos.push(i); });
@@ -763,15 +777,97 @@ function compteurListesHtml(c) {
   if (!sans.length) h += '<p class="vide">Aucune.</p>';
   [...fam.entries()].sort((a, b) => b[1].infos.length - a[1].infos.length || a[0] - b[0]).forEach(([num, f]) => {
     h += '<div class="cpt-fam">' + num + '. ' + e(f.lib) + '<span class="n">' + f.infos.length + '</span></div><ul>'
-      + f.infos.map((i) => '<li>' + e(i.texte) + '</li>').join('') + '</ul>';
+      + f.infos.map((i) => '<li>' + e(i.texte) + bouton(i, 'valider', 'Valider à la main') + '</li>').join('') + '</ul>';
   });
   const div = c.infos.filter((i) => i.etat === 'grave').concat(c.infos.filter((i) => i.etat === 'divergence'));
   h += '<h5>Sources divergentes <span class="n">' + div.length + '</span></h5>';
-  h += div.length ? '<ul>' + div.map((i) => '<li>' + past(i.etat === 'grave' ? 'carmin' : 'orange') + e(i.texte) + ' <span style="color:#5b6573">— ' + i.famille + '. ' + e(i.familleLib) + '</span></li>').join('') + '</ul>'
+  h += div.length ? '<ul>' + div.map((i) => '<li>' + past(i.etat === 'grave' ? 'carmin' : 'orange') + e(i.texte) + ' <span style="color:#5b6573">— ' + i.famille + '. ' + e(i.familleLib) + '</span>'
+        + bouton(i, 'lever', i.etat === 'grave' ? 'Lever (associé, sous code)' : 'Lever') + '</li>').join('') + '</ul>'
     : '<p class="vide">Aucune.</p>';
-  return h + '<p class="vide" style="margin:6px 0 0">Les pièces se réclament dans la rubrique Pièces du dossier.</p></div>';
+  const faits = c.infos.filter((i) => i.etat === 'main');
+  if (faits.length) {
+    h += '<h5>Validées à la main ou levées <span class="n">' + faits.length + '</span></h5><ul>'
+      + faits.map((i) => '<li>' + (i.nature === 'grave' ? past('carmin') : i.nature === 'divergence' ? past('orange') : '') + e(i.texte)
+        + ' <span style="color:#5b6573">— ' + e(i.geste.motif || '') + ' (' + e(i.geste.par || '') + ', ' + new Date(i.geste.le).toLocaleDateString('fr-FR') + ')</span>'
+        + bouton(i, 'annuler', 'Annuler') + '</li>').join('') + '</ul>';
+  }
+  return h + '<p class="vide" style="margin:6px 0 0">Les pièces se réclament dans la rubrique Pièces du dossier. Chaque geste demande un motif et s\'inscrit au journal.</p></div>';
 }
 
+/* ---------- RAPPORT CLIENT : seuil et accord du notaire (lot 7, 21/11/2026) ----------
+   Mêmes règles que FUSION (décisions des 20 et 21/11) : sous le seuil (85 % par défaut, modifiable par dossier
+   par l'administrateur) le rapport client est bloqué ; du seuil à 99 % il demande l'accord du notaire en charge ;
+   à 100 % il est libre. Le rapport INTERNE reste toujours disponible. MARTEAU n'a pas de connexion par personne :
+   ce qui revient au notaire ou à l'administrateur passe SOUS CODE (le code de levée des réserves). */
+const CPT_SEUIL_DEFAUT = 85;
+const CPT_REFUS = ['Points essentiels non tranchés', 'Difficulté majeure', 'Autre'];
+function compteurSeuilM(d) { const v = Number(((d.dossier || {}).compteur || {}).seuil); return v >= 50 && v <= 100 ? v : CPT_SEUIL_DEFAUT; }
+function joursOuvresDepuisM(iso) {
+  const a = new Date(iso), b = new Date(); let n = 0; a.setHours(0, 0, 0, 0); b.setHours(0, 0, 0, 0);
+  while (a < b) { a.setDate(a.getDate() + 1); const j = a.getDay(); if (j !== 0 && j !== 6) n++; }
+  return n;
+}
+// {etat, message} — etat ∈ non-analyse | bloque | leve | accord-requis | demande | refuse | accorde | libre
+function compteurAutorisationM(d) {
+  const c = compteurDossier(d), K = (d.dossier || {}).compteur || {}, seuil = compteurSeuilM(d), a = K.accord;
+  if (c.nonAnalyse) return { etat: 'non-analyse', c, message: 'Rapport client non éditable : dossier non analysé.' };
+  if (c.pc < seuil) return K.seuilLeve ? { etat: 'leve', c, message: 'Blocage levé par l\'administrateur : ' + (K.seuilLeve.motif || '') }
+    : { etat: 'bloque', c, message: 'Rapport client non éditable : vous êtes à ' + c.pc + ' %, il faut ' + seuil + ' %.' };
+  if (c.pc >= 100) return { etat: 'libre', c, message: 'Toutes les informations sont justifiées.' };
+  if (a && a.statut === 'accorde' && c.grave > (a.graves || 0)) return { etat: 'accord-requis', c, message: 'L\'accord du notaire est tombé : une divergence grave est apparue depuis. Il faut le redemander.' };
+  if (a && a.statut === 'accorde') return { etat: 'accorde', c, message: 'Sortie autorisée par le notaire' + (a.decideLe ? ' le ' + new Date(a.decideLe).toLocaleDateString('fr-FR') : '') + '.' };
+  if (a && a.statut === 'refuse') return { etat: 'refuse', c, message: 'Sortie refusée par le notaire : ' + (a.motif || '') };
+  if (a && a.statut === 'demande') return { etat: 'demande', c, geste: a, message: 'Accord du notaire demandé le ' + new Date(a.le).toLocaleDateString('fr-FR') + '.' };
+  return { etat: 'accord-requis', c, message: 'Vous êtes à ' + c.pc + ' % : la sortie du rapport client demande l\'accord du notaire en charge du dossier.' };
+}
+function compteurRapportHtml(d) {
+  const au = compteurAutorisationM(d), ok = ['libre', 'accorde', 'leve'].includes(au.etat), clos = Boolean(d.dossier.clos_le);
+  let h = '<button class="sec" id="rapport-client"' + (ok ? '' : ' disabled') + ' title="' + e(au.message) + '">Rapport client (Word)</button>'
+    + ' <span class="att">' + e(au.message) + '</span>';
+  if (clos) return h;
+  const g = (geste, lib, plein) => ' <button class="' + (plein ? 'sec' : 'cpt-g') + '" type="button" data-geste="' + geste + '">' + lib + '</button>';
+  if (au.etat === 'bloque') h += g('lever-seuil', 'Lever le blocage (administrateur, sous code)');
+  if (au.etat === 'accord-requis' || au.etat === 'refuse') h += g('demander', 'Demander l\'accord du notaire', true);
+  if (au.etat === 'demande') {
+    const j = joursOuvresDepuisM(au.geste.le);
+    if (au.geste.relanceLe) h += ' <span class="att">accord en attente depuis ' + j + ' jour' + (j > 1 ? 's' : '') + ' ouvré' + (j > 1 ? 's' : '') + '</span>';
+    else if (j >= 3) h += g('relancer', 'Relancer le notaire', true);
+    h += g('accorder', 'J\'autorise la sortie (notaire, sous code)') + g('refuser', 'Je refuse (notaire, sous code)');
+  }
+  return h + ' <span class="att">· seuil : ' + compteurSeuilM(d) + ' %</span>' + g('seuil', 'modifier');
+}
+// Un geste du compteur : motif et code demandés comme pour la levée d'une réserve, puis la page se relit.
+async function compteurGesteM(ref, d, geste, info, qui) {
+  const c = compteurDossier(d), i = info ? c.infos.find((x) => x.id === info) : null, corps = { dossier: ref, qui, geste, pourcentage: c.pc, graves: c.grave };
+  if (info) { if (!i) return; corps.info = info; corps.libelle = i.texte; corps.grave = i.nature === 'grave'; }
+  if (geste === 'valider' || geste === 'lever' || geste === 'lever-seuil') {
+    const m = window.prompt(geste === 'valider' ? 'Motif de la validation à la main (journalisé, obligatoire) :' : geste === 'lever' ? 'Motif de la levée de cette divergence (journalisé, obligatoire) :' : 'Motif de la levée du blocage (journalisé, obligatoire) :');
+    if (!m || m.trim().length < 5) return; corps.motif = m.trim();
+  }
+  if (geste === 'refuser') {
+    const n = window.prompt('Motif du refus :\n' + CPT_REFUS.map((t, k) => (k + 1) + ' — ' + t).join('\n') + '\n\nTapez 1, 2 ou 3, ou écrivez le motif :');
+    if (!n || !n.trim()) return; corps.motif = CPT_REFUS[Number(n.trim()) - 1] || n.trim();
+    if (corps.motif === 'Autre') { const p = window.prompt('Précisez le motif du refus :'); if (!p || p.trim().length < 5) return; corps.motif = p.trim(); }
+  }
+  if (geste === 'seuil') {
+    const v = window.prompt('Seuil du rapport client pour ce dossier, en pour cent (50 à 100) :', String(compteurSeuilM(d)));
+    if (!v) return; corps.valeur = Number(String(v).replace(',', '.')); if (!(corps.valeur >= 50 && corps.valeur <= 100)) { window.alert('Seuil attendu entre 50 et 100.'); return; }
+  }
+  const sousCode = ['seuil', 'lever-seuil', 'accorder', 'refuser'].includes(geste) || (geste === 'lever' && corps.grave) || (geste === 'annuler' && i && i.nature === 'grave');
+  if (sousCode) { corps.code = window.prompt('Ce geste revient au notaire en charge ou à l\'administrateur. Code :'); if (!corps.code) return; }
+  await posterDossier('compteur', corps);
+  if (geste === 'demander' || geste === 'relancer') {
+    // courriel au notaire en charge : ouvert dans la messagerie du poste, raisons listées
+    const p = personneParInitiales(d.dossier.associe, true), dest = (p && p.courriel) || '';
+    const raisons = c.infos.filter((x) => x.etat !== 'ok' && x.etat !== 'main').sort((x, y) => (y.etat === 'grave') - (x.etat === 'grave'));
+    const refD = (d.dossier.denomination || d.dossier.siren) + ' (' + d.dossier.reference + (d.dossier.numero_kivia ? ', Kivia ' + d.dossier.numero_kivia : '') + ')';
+    const texte = (geste === 'relancer' ? 'Relance. ' : '') + 'Le rapport client de ce dossier est justifié à ' + c.pc + ' % (seuil : ' + compteurSeuilM(d) + ' %). Sa sortie demande votre accord.\n\n'
+      + 'Ce qui manque ou diverge (' + raisons.length + ') :\n' + raisons.slice(0, 25).map((x) => '- ' + (x.etat === 'grave' ? '[divergence grave] ' : x.etat === 'divergence' ? '[divergence] ' : '') + x.texte).join('\n')
+      + (raisons.length > 25 ? '\n… et ' + (raisons.length - 25) + ' autres, à lire dans MARTEAU.' : '')
+      + '\n\nPour autoriser ou refuser : ' + location.origin + location.pathname + ' — dossier ' + d.dossier.reference + ', ligne « Rapport client ».';
+    location.href = 'mailto:' + encodeURIComponent(dest) + '?subject=' + encodeURIComponent('MARTEAU — ' + refD + ' — ' + (geste === 'relancer' ? 'relance : ' : '') + 'accord demandé pour la sortie du rapport client') + '&body=' + encodeURIComponent(texte).slice(0, 1800);
+  }
+}
 const posterDossier = async (action, corps) => {
   const r = await fetch(DOSSIER, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -1629,7 +1725,14 @@ async function afficherEtat(ref) {
     if (zc) zc.addEventListener('click', (ev) => {
       ev.preventDefault();
       const deja = $('#tete-dossier .cpt-listes');
-      if (deja) deja.remove(); else zc.insertAdjacentHTML('afterend', compteurListesHtml(compteurDossier(d)));
+      if (deja) { deja.remove(); return; }
+      zc.insertAdjacentHTML('afterend', compteurListesHtml(compteurDossier(d), Boolean(d.dossier.clos_le)));
+      $('#tete-dossier .cpt-listes').querySelectorAll('button[data-geste]').forEach((b) => b.addEventListener('click', async () => {
+        b.disabled = true;
+        try { await compteurGesteM(ref, d, b.dataset.geste, b.dataset.info, quiDem()); await afficherEtat(ref); const z2 = $('#tete-dossier [data-cpt]'); if (z2) z2.click(); }
+        catch (err) { window.alert(err.message); }
+        finally { b.disabled = false; }
+      }));
     });
   }
   // 21/11/2026 (JFD) : un dossier ouvert avant l'obligation du numéro Kivia le DEMANDE dès qu'on le
@@ -1687,9 +1790,11 @@ async function afficherEtat(ref) {
   // repasse orange de lui-même, page ouverte, au bout des deux heures.
   h += '<div class="rang" style="margin:-4px 0 12px"><div style="flex:0 0 auto">'
     + '<button class="' + classeActu(d.dossier.derniere_actualisation) + '" id="relancer">Actualiser le dossier</button></div>'
-    + '<div style="flex:0 0 auto"><button class="sec" id="rapport-word">Rapport d\'audit (Word)</button></div>'
+    + '<div style="flex:0 0 auto"><button class="sec" id="rapport-word" title="Toujours disponible ; porte la mention DOCUMENT INTERNE — NE PAS DIFFUSER">Rapport interne (Word)</button></div>'
     + '<div style="flex:1 1 auto" class="att"><span id="actu-age">' + texteActu(d.dossier.derniere_actualisation) + '</span><br>Réinterroge REDPAR, le BODACC et le registre, puis la filiation cadastrale et les arrêtés termites et mérule, et recalcule les dix familles. Le rapport de risques se commande à part.</div></div>';
 
+  // 21/11/2026 (lot 7) — rapport CLIENT : grisé sous le seuil, accord du notaire du seuil à 99 %
+  h += '<div class="rang" id="sec-rapport-client" style="margin:-4px 0 12px"><div style="flex:1 1 auto">' + compteurRapportHtml(d) + '</div></div>';
   // 14/10/2026 — rapport de RISQUES du portefeuille (mode différé)
   h += '<div class="rang" id="sec-risques" style="margin:-4px 0 12px"><div style="flex:0 0 auto">'
     + '<button class="sec" id="risques-go" data-sec="1">' + (d.risques && d.risques.statut === 'termine' ? 'Actualiser le rapport de risques' : 'Rapport de risques du portefeuille') + '</button></div>'
@@ -1816,11 +1921,29 @@ async function afficherEtat(ref) {
     const b = $('#rapport-word'); b.disabled = true; const avant = b.textContent; b.textContent = 'Rédaction du rapport…';
     try {
       if (!window.MarteauRapport) throw new Error('module rapport non chargé, rechargez la page');
-      const nom = await window.MarteauRapport.telechargerRapport(d);
+      const nom = await window.MarteauRapport.telechargerRapport(d, { interne: true });
       b.textContent = 'Rapport téléchargé ✓'; b.title = nom;
     } catch (err) { b.textContent = avant; alert('Rapport impossible : ' + err.message); }
     finally { b.disabled = false; setTimeout(() => { b.textContent = avant; }, 3000); }
   });
+  // 21/11/2026 (lot 7) — rapport client et gestes de la ligne (levée du blocage, accord du notaire, seuil)
+  { const bc = $('#rapport-client');
+    if (bc) bc.addEventListener('click', async () => {
+      if (!['libre', 'accorde', 'leve'].includes(compteurAutorisationM(d).etat)) return;
+      bc.disabled = true; const avant = bc.textContent; bc.textContent = 'Rédaction du rapport…';
+      try {
+        if (!window.MarteauRapport) throw new Error('module rapport non chargé, rechargez la page');
+        const nom = await window.MarteauRapport.telechargerRapport(d, { client: true });
+        bc.textContent = 'Rapport téléchargé ✓'; bc.title = nom;
+      } catch (err) { bc.textContent = avant; alert('Rapport impossible : ' + err.message); }
+      finally { bc.disabled = false; setTimeout(() => { bc.textContent = avant; }, 3000); }
+    });
+    document.querySelectorAll('#sec-rapport-client button[data-geste]').forEach((b) => b.addEventListener('click', async () => {
+      b.disabled = true;
+      try { await compteurGesteM(ref, d, b.dataset.geste, null, quiDem()); await afficherEtat(ref); }
+      catch (err) { window.alert(err.message); b.disabled = false; }
+    }));
+  }
 
   $('#relancer').addEventListener('click', async () => {
     const b = $('#relancer');
