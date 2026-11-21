@@ -632,6 +632,9 @@ async function lire(res, ref) {
   const dix = familles.map((f) => {
     const vs = voyants.filter((v) => v.famille === f.numero).map((v) => ({
       voyant: v.voyant, libelle: v.libelle, couleur: v.couleur,
+      // 21/11/2026 — le code de la phrase sert au compteur de justificatifs
+      // (distinguer une divergence d'une simple attente).
+      code: v.phrase_code,
       texte: rendre(v.phrase_code, v.precisions).texte,
     }));
     // La couleur de la famille est la plus grave de ses voyants. C'est
