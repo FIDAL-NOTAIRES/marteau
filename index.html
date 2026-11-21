@@ -108,6 +108,15 @@
   .cpt .cpt-t { font-size: 13px; color: #5b6573; line-height: 1.35; }
   .cpt .cpt-t b { color: #0F2238; font-weight: 600; }
   .cpt-past { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin: 0 3px 0 0; }
+  .cpt[data-cpt] { cursor: pointer; }
+  .cpt-listes { margin: 8px 0 0; padding: 8px 12px; border: 1px solid #dde2e8; border-radius: 6px; background: #fff; font-size: 13px; font-weight: 400; }
+  .cpt-listes h5 { margin: 8px 0 4px; font-size: 12px; letter-spacing: .4px; text-transform: uppercase; color: #33838B; }
+  .cpt-listes h5:first-child { margin-top: 0; }
+  .cpt-listes h5 .n, .cpt-listes .cpt-fam .n { margin-left: 6px; color: #5b6573; font-weight: 600; text-transform: none; letter-spacing: 0; }
+  .cpt-listes .cpt-fam { margin: 6px 0 2px; font-weight: 600; }
+  .cpt-listes ul { list-style: none; margin: 0 0 6px; padding: 0; }
+  .cpt-listes li { padding: 3px 0; border-top: 1px dotted #dde2e8; }
+  .cpt-listes .vide { margin: 0 0 6px; color: #5b6573; font-style: italic; }
   /* 21/11/2026 : dossier sans numéro Kivia — seuls le titre, la tête et le champ à remplir restent visibles */
   #page-dossier.bloque-kivia > nav, #page-dossier.bloque-kivia > section.carte { display: none !important; }
 </style>
@@ -707,15 +716,14 @@ const CPT_COUL = { canard: '#33838B', orange: '#FF982D', carmin: '#A01040', gris
 const CPT_HORS = ['identite_absorbee'];
 const CPT_DIVERGENCE = /divergence|discordance|ecart/;
 function compteurDossier(d) {
-  const c = { total: 0, ok: 0, sans: 0, incomplet: 0, divergence: 0, grave: 0 };
+  const c = { total: 0, ok: 0, sans: 0, incomplet: 0, divergence: 0, grave: 0, infos: [] };
   (d.familles || []).forEach((f) => (f.voyants || []).forEach((v) => {
     if (CPT_HORS.includes(v.code)) return;
     c.total++;
-    if (v.couleur === 'canard') c.ok++;
-    else if (v.couleur === 'jaune') c.sans++;
-    else if (v.couleur === 'carmin') c.grave++;
-    else if (CPT_DIVERGENCE.test(v.code || '')) c.divergence++;
-    else c.incomplet++;
+    const etatInfo = v.couleur === 'canard' ? 'ok' : v.couleur === 'jaune' ? 'sans' : v.couleur === 'carmin' ? 'grave'
+      : CPT_DIVERGENCE.test(v.code || '') ? 'divergence' : 'incomplet';
+    c[etatInfo]++;
+    c.infos.push({ etat: etatInfo, famille: f.numero, familleLib: f.libelle, texte: v.texte });
   }));
   c.nonAnalyse = !c.total;
   c.orange = c.sans + c.incomplet + c.divergence; c.carmin = c.grave;
@@ -739,7 +747,29 @@ function compteurHtml(c, taille) {
   const t = c.incomplets ? '<b>' + pl(c.incomplets, 'information incomplète', 'informations incomplètes') + '</b>'
       + (c.divergences ? ', dont ' + pl(c.divergences, 'divergence', 'divergences') + (c.grave ? ' (<span class="cpt-past" style="background:' + CPT_COUL.carmin + '"></span>' + c.grave + ')' : '') : '')
     : '<b>tout est justifié</b>';
-  return '<div class="cpt">' + camembertSvg(c, taille) + '<span class="cpt-t">Justificatifs du dossier : ' + t + '</span></div>';
+  return '<div class="cpt" data-cpt="1" title="Ouvrir ou fermer le détail des justificatifs">' + camembertSvg(c, taille) + '<span class="cpt-t">Justificatifs du dossier : ' + t + ' <a href="#" style="margin-left:6px">détail</a></span></div>';
+}
+
+// LES DEUX LISTES (lot 3, 21/11/2026) : un clic sur le compteur ouvre les informations SANS PIÈCE (par famille, les
+// familles qui en comptent le plus en tête) et les SOURCES DIVERGENTES (les graves d'abord). Jamais le nom d'une
+// couleur : une pastille. Lecture seule pour l'instant — la validation à la main et la levée d'une divergence
+// demandent une table en base et viennent dans un lot suivant.
+function compteurListesHtml(c) {
+  const past = (coul) => '<span class="cpt-past" style="background:' + CPT_COUL[coul] + '"></span>';
+  const sans = c.infos.filter((i) => i.etat === 'sans' || i.etat === 'incomplet');
+  const fam = new Map();
+  sans.forEach((i) => { if (!fam.has(i.famille)) fam.set(i.famille, { lib: i.familleLib, infos: [] }); fam.get(i.famille).infos.push(i); });
+  let h = '<div class="cpt-listes"><h5>Informations sans pièce <span class="n">' + sans.length + '</span></h5>';
+  if (!sans.length) h += '<p class="vide">Aucune.</p>';
+  [...fam.entries()].sort((a, b) => b[1].infos.length - a[1].infos.length || a[0] - b[0]).forEach(([num, f]) => {
+    h += '<div class="cpt-fam">' + num + '. ' + e(f.lib) + '<span class="n">' + f.infos.length + '</span></div><ul>'
+      + f.infos.map((i) => '<li>' + e(i.texte) + '</li>').join('') + '</ul>';
+  });
+  const div = c.infos.filter((i) => i.etat === 'grave').concat(c.infos.filter((i) => i.etat === 'divergence'));
+  h += '<h5>Sources divergentes <span class="n">' + div.length + '</span></h5>';
+  h += div.length ? '<ul>' + div.map((i) => '<li>' + past(i.etat === 'grave' ? 'carmin' : 'orange') + e(i.texte) + ' <span style="color:#5b6573">— ' + i.famille + '. ' + e(i.familleLib) + '</span></li>').join('') + '</ul>'
+    : '<p class="vide">Aucune.</p>';
+  return h + '<p class="vide" style="margin:6px 0 0">Les pièces se réclament dans la rubrique Pièces du dossier.</p></div>';
 }
 
 const posterDossier = async (action, corps) => {
@@ -1594,6 +1624,14 @@ async function afficherEtat(ref) {
       + ';background:' + (orange ? '#FFF4E8' : '#FCEEF1') + ';color:#0F2238;font-weight:600">⚠ ' + e(ad.texte) + '</div>';
   }
   $('#tete-dossier').innerHTML = t;
+  { // 21/11/2026 — clic sur le compteur : ouvre ou ferme les deux listes, sous la ligne d'informations
+    const zc = $('#tete-dossier [data-cpt]');
+    if (zc) zc.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      const deja = $('#tete-dossier .cpt-listes');
+      if (deja) deja.remove(); else zc.insertAdjacentHTML('afterend', compteurListesHtml(compteurDossier(d)));
+    });
+  }
   // 21/11/2026 (JFD) : un dossier ouvert avant l'obligation du numéro Kivia le DEMANDE dès qu'on le
   // rouvre. Tant qu'il manque, la page ne montre que ce champ (l'associé en charge, lui, est exigé
   // depuis l'origine). Un dossier clos n'est pas concerné : ses informations sont figées.
