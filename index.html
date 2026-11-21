@@ -122,6 +122,7 @@
   .cpt-listes .vide { margin: 0 0 6px; color: #5b6573; font-style: italic; }
   /* 21/11/2026 : dossier sans numéro Kivia — seuls le titre, la tête et le champ à remplir restent visibles */
   #page-dossier.bloque-kivia > nav, #page-dossier.bloque-kivia > section.carte { display: none !important; }
+  #page-dossier.bloque-alerte > nav, #page-dossier.bloque-alerte > section.carte { display: none !important; }
 </style>
   <script src="https://connexion-omega.vercel.app/bandeau.js" defer></script>
 </head>
@@ -835,6 +836,44 @@ function compteurRapportHtml(d) {
     h += g('accorder', 'J\'autorise la sortie (notaire, sous code)') + g('refuser', 'Je refuse (notaire, sous code)');
   }
   return h + ' <span class="att">· seuil : ' + compteurSeuilM(d) + ' %</span>' + g('seuil', 'modifier');
+}
+/* ---------- ALERTE DES DIVERGENCES GRAVES (lot 8, 21/11/2026) ----------
+   Décisions du 20/11 : pas de courriel automatique ; devant une divergence grave non levée, le collaborateur fait
+   un CHOIX BLOQUANT — « J'alerte le notaire » (un seul courriel par dossier, la liste dans le corps, ton direct,
+   une pastille et jamais le nom d'une couleur, lien vers le dossier) ou « Je n'alerte pas » (motif obligatoire).
+   Les deux sont inscrits au journal avec la liste des points. Un point NOUVEAU redemande le choix ; le courriel
+   cite alors le nouveau et rappelle simplement les anciens non levés. */
+function compteurAlerteM(d) {
+  const A = ((d.dossier || {}).compteur || {}).alertes || {};
+  const graves = compteurDossier(d).infos.filter((i) => i.etat === 'grave');
+  return { nouveaux: graves.filter((i) => !A[i.id]), anciens: graves.filter((i) => A[i.id]) };
+}
+function compteurAlerteHtml(d) {
+  const a = compteurAlerteM(d); if (!a.nouveaux.length) return '';
+  const past = '<span class="cpt-past" style="background:' + CPT_COUL.carmin + '"></span>';
+  return '<div id="cpt-alerte" style="margin:0 0 12px;padding:12px 14px;border:2px solid #A01040;border-radius:6px;background:#FCEEF1;color:#0F2238">'
+    + '<b>' + a.nouveaux.length + ' divergence' + (a.nouveaux.length > 1 ? 's graves à signaler' : ' grave à signaler') + ' au notaire en charge (' + e(d.dossier.associe) + ')</b>'
+    + '<ul style="list-style:none;margin:6px 0 8px;padding:0">' + a.nouveaux.map((i) => '<li style="padding:2px 0">' + past + e(i.texte) + '</li>').join('') + '</ul>'
+    + (a.anciens.length ? '<p class="att" style="margin:0 0 8px">Déjà traitée' + (a.anciens.length > 1 ? 's' : '') + ' et non levée' + (a.anciens.length > 1 ? 's' : '') + ' : ' + a.anciens.length + '.</p>' : '')
+    + '<button class="sec" type="button" data-alerte="alerter">J\'alerte le notaire</button> <button class="sec" type="button" data-alerte="ne-pas-alerter">Je n\'alerte pas</button>'
+    + '<p class="att" style="margin:8px 0 0">Le dossier s\'affiche une fois ce choix fait. Il est inscrit au journal.</p></div>';
+}
+async function compteurAlerterM(ref, d, geste, qui) {
+  const a = compteurAlerteM(d), corps = { dossier: ref, qui, geste, infos: a.nouveaux.map((i) => ({ id: i.id, libelle: i.texte })) };
+  if (geste === 'ne-pas-alerter') {
+    const m = window.prompt('Motif pour ne pas alerter le notaire (journalisé, obligatoire) :');
+    if (!m || m.trim().length < 5) return false; corps.motif = m.trim();
+  }
+  await posterDossier('compteur', corps);
+  if (geste === 'alerter') {
+    const p = personneParInitiales(d.dossier.associe, true), dest = (p && p.courriel) || '';
+    const refD = (d.dossier.denomination || d.dossier.siren) + ' (' + d.dossier.reference + (d.dossier.numero_kivia ? ', Kivia ' + d.dossier.numero_kivia : '') + ')';
+    const texte = 'Divergence' + (a.nouveaux.length > 1 ? 's graves relevées' : ' grave relevée') + ' sur ce dossier :\n' + a.nouveaux.map((i) => '\uD83D\uDD34 ' + i.texte).join('\n')
+      + (a.anciens.length ? '\n\nPour rappel, déjà signalé et non levé :\n' + a.anciens.map((i) => '\uD83D\uDD34 ' + i.texte).join('\n') : '')
+      + '\n\nOuvrir le dossier : ' + location.origin + location.pathname + '#' + d.dossier.reference;
+    location.href = 'mailto:' + encodeURIComponent(dest) + '?subject=' + encodeURIComponent('MARTEAU — ' + refD + ' — alerte : divergence' + (a.nouveaux.length > 1 ? 's graves' : ' grave')) + '&body=' + encodeURIComponent(texte).slice(0, 1800);
+  }
+  return true;
 }
 // Un geste du compteur : motif et code demandés comme pour la levée d'une réserve, puis la page se relit.
 async function compteurGesteM(ref, d, geste, info, qui) {
@@ -1740,6 +1779,19 @@ async function afficherEtat(ref) {
   // depuis l'origine). Un dossier clos n'est pas concerné : ses informations sont figées.
   const bloque = !d.dossier.clos_le && !d.dossier.numero_kivia;
   $('#page-dossier').classList.toggle('bloque-kivia', bloque);
+  { // 21/11/2026 (lot 8) — choix bloquant devant une divergence grave : le dossier s'affiche une fois le choix fait
+    const ha = (!bloque && !d.dossier.clos_le) ? compteurAlerteHtml(d) : '';
+    $('#page-dossier').classList.toggle('bloque-alerte', Boolean(ha));
+    if (ha) {
+      $('#tete-dossier').insertAdjacentHTML('beforeend', ha);
+      $('#cpt-alerte').querySelectorAll('button[data-alerte]').forEach((b) => b.addEventListener('click', async () => {
+        b.disabled = true;
+        try { if (await compteurAlerterM(ref, d, b.dataset.alerte, quiDem())) await afficherEtat(ref); }
+        catch (err) { window.alert(err.message); }
+        finally { b.disabled = false; }
+      }));
+    }
+  }
   if (bloque) {
     $('#etat-res').innerHTML = '<section class="carte"><div class="alerte" style="margin:0 0 10px">Ce dossier n’a pas encore de numéro de dossier Kivia. Renseignez-le pour l’ouvrir.</div>'
       + '<div class="rang"><div style="flex:0 0 220px"><label for="kv-num">N° de dossier Kivia</label><input type="text" id="kv-num" maxlength="40" autocomplete="off"></div>'
