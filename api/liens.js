@@ -35,7 +35,32 @@ const REDPAR = process.env.REDPAR_BASE || 'https://redpar-backend.vercel.app';
 
 const CHAMPS = ['id', 'dateparution', 'familleavis', 'commercant', 'registre',
   'listepersonnes', 'listeprecedentproprietaire', 'listeprecedentexploitant',
-  'acte', 'modificationsgenerales', 'url_complete'].join(',');
+  'acte', 'modificationsgenerales', 'url_complete', 'jugement', 'tribunal'].join(',');
+
+// PROCÉDURE COLLECTIVE (21/11/2026) — famille d'avis « collective » du BODACC. Le champ
+// `jugement` est un JSON en texte : { famille, nature, date, complementJugement }.
+// La dernière annonce fait foi : si elle clôt la procédure (clôture, extinction du passif,
+// rétractation, infirmation), rien n'est en cours ; un plan arrêté (sauvegarde, redressement)
+// reste une procédure en cours d'exécution. Jamais d'exception : une annonce illisible est
+// gardée avec une nature vide plutôt que perdue.
+const CLOTURE_PROCEDURE = /cl[oô]ture|extinction du passif|r[ée]tractation|infirm|fin de la proc[ée]dure/i;
+export function procedureCollective(annonces) {
+  const lues = (annonces || []).filter((a) => a && a.familleavis === 'collective').map((a) => {
+    let j = a.jugement;
+    if (typeof j === 'string') { try { j = JSON.parse(j); } catch { j = null; } }
+    j = j && typeof j === 'object' ? j : {};
+    return { id: a.id || null, parution: a.dateparution || null, date: j.date || a.dateparution || null,
+      nature: String(j.nature || j.famille || '').trim(), famille: String(j.famille || '').trim(), tribunal: a.tribunal || null };
+  }).sort((x, y) => String(x.date || '').localeCompare(String(y.date || '')) || String(x.parution || '').localeCompare(String(y.parution || '')));
+  if (!lues.length) return null;
+  const d = lues[lues.length - 1];
+  return {
+    en_cours: !CLOTURE_PROCEDURE.test(d.nature + ' ' + d.famille),
+    nature: d.nature || 'annonce de procédure collective', date: d.date, tribunal: d.tribunal,
+    source: d.id ? `https://www.bodacc.fr/pages/annonces-commerciales-detail/?q.id=id:${d.id}` : null,
+    annonces: lues.length,
+  };
+}
 
 const propreSiren = (v) => String(v == null ? '' : v).replace(/\D/g, '');
 const estSiren = (v) => /^\d{9}$/.test(v);
@@ -263,6 +288,8 @@ export default async function handler(req, res) {
     annonces_lues: annonces.length,
     annonces_total: totalAnnonces,
     tronque: totalAnnonces > annonces.length,
+    // 21/11/2026 — procédure collective de la société interrogée (null : aucune annonce de cette famille)
+    procedure_collective: procedureCollective(annonces.filter((a) => (Array.isArray(a.registre) ? a.registre : [a.registre]).some((r) => propreSiren(r) === siren))),
 
     // Les noms sous lesquels des biens peuvent etre publies. C'est CETTE liste
     // qu'on porte au fichier immobilier, pas seulement la denomination du jour.
