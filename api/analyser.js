@@ -72,7 +72,7 @@ export default async function handler(req, res) {
     const refId = (fam, code) => refs.find((r) => r.famille === fam && r.code === code)?.id;
 
     const [tete] = await sql`
-      SELECT denominations_anterieures, etat_administratif FROM marteau_societe
+      SELECT denominations_anterieures, etat_administratif, procedure_collective FROM marteau_societe
        WHERE dossier_id = ${d.id} AND siren = ${d.siren_tete}
     `;
     const [absorbante] = await sql`
@@ -142,6 +142,15 @@ export default async function handler(req, res) {
     if (tete?.etat_administratif === 'cessee') {
       if (absorbante) poser('identite_absorbee', { absorbante: absorbante.denomination ?? '', siren: absorbante.siren });
       else poser('identite_cessee');
+    }
+    // 21/11/2026 — PROCÉDURE COLLECTIVE publiée au BODACC et non close : divergence
+    // grave (décision de JFD du 20/11, cas 2). Une procédure close ne pose rien.
+    if (tete?.procedure_collective?.en_cours) {
+      const pc = tete.procedure_collective;
+      const quand = pc.date && !Number.isNaN(Date.parse(pc.date)) ? ' du ' + new Date(pc.date).toLocaleDateString('fr-FR', { timeZone: 'Europe/Paris' }) : '';
+      poser('identite_procedure_collective', {
+        precision: String(pc.nature || 'annonce de procédure collective').replace(/^./, (c) => c.toLowerCase()) + quand + (pc.tribunal ? ' (' + pc.tribunal + ')' : ''),
+      });
     }
     // Dénominations distinctes — comparées SANS AUCUNE ESPACE : le BODACC
     // porte des coquilles (« A LO YER MODERE ») qui feraient compter deux
