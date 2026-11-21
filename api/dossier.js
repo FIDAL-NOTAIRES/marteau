@@ -798,12 +798,14 @@ async function lever(res, { dossier, reserve, motif, qui, code }) {
 //         seuil | lever-seuil                  (administrateur : sous code)
 //         demander | relancer                  (collaborateur)
 //         accorder | refuser                   (notaire en charge : sous code)
+//         alerter | ne-pas-alerter             (collaborateur : choix bloquant devant une divergence grave ;
+//                                               `infos` = [{id, libelle}] ; « ne pas alerter » exige un motif)
 //
 // MARTEAU n'a pas de connexion par personne : ce qui est réservé au notaire
 // ou à l'administrateur passe SOUS CODE, le même que la levée des réserves
 // (MARTEAU_CODE_LEVEE). Un code absent de la configuration refuse (503).
 const COMPTEUR_SOUS_CODE = new Set(['seuil', 'lever-seuil', 'accorder', 'refuser']);
-async function compteur(res, { dossier, qui, geste, info, libelle, grave, motif, valeur, pourcentage, graves, code }) {
+async function compteur(res, { dossier, qui, geste, info, infos, libelle, grave, motif, valeur, pourcentage, graves, code }) {
   if (!dossier || !geste) return res.status(400).json({ erreur: 'dossier et geste requis' });
   if (!qui) return res.status(400).json({ erreur: 'qui est requis' });
   const sql = db();
@@ -879,6 +881,22 @@ async function compteur(res, { dossier, qui, geste, info, libelle, grave, motif,
       C.accord = { ...(C.accord || {}), statut: oui ? 'accorde' : 'refuse', decideLe: le, decidePar: par, motif: oui ? null : m, pc: pourcentage ?? null, graves: Number(graves) || 0 };
       quoi = oui ? 'compteur — sortie du rapport client autorisée' : 'compteur — sortie du rapport client refusée';
       detail = { pourcentage: pourcentage ?? null, motif: oui ? null : m };
+      break;
+    }
+    case 'alerter':
+    case 'ne-pas-alerter': {
+      // 21/11/2026 (lot 8) — décision du 20/11 : devant une divergence grave, le collaborateur CHOISIT
+      // d'alerter ou non le notaire en charge ; le choix, la liste des points et le motif du silence
+      // sont inscrits au journal. Un point nouveau redemande le choix.
+      const points = (Array.isArray(infos) ? infos : []).filter((x) => x && x.id).slice(0, 60)
+        .map((x) => ({ id: String(x.id), libelle: String(x.libelle ?? '').slice(0, 400) }));
+      if (!points.length) return res.status(400).json({ erreur: 'infos requises' });
+      const oui = geste === 'alerter';
+      if (!oui && !exigerMotif()) return res.status(400).json({ erreur: 'un motif est requis pour ne pas alerter — il est journalisé' });
+      C.alertes = { ...(C.alertes || {}) };
+      for (const x of points) C.alertes[x.id] = { choix: oui ? 'alerte' : 'non', le, par, motif: oui ? null : m, libelle: x.libelle };
+      quoi = oui ? 'compteur — notaire alerté des divergences graves' : 'compteur — divergences graves : notaire non alerté';
+      detail = { notaire: d.associe_en_charge, points: points.map((x) => x.libelle), motif: oui ? null : m };
       break;
     }
     default:
