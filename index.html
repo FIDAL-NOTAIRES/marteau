@@ -102,6 +102,12 @@
 .nav-d{display:inline-block;padding:6px 14px;border:1px solid #d6d3d1;border-radius:999px;background:#fff;color:var(--nuit);text-decoration:none;font-size:13.5px;font-weight:600}
 .nav-d:hover{background:#eef4f5}
 [id^="sec-"]{scroll-margin-top:60px}
+  /* 21/11/2026 — compteur de justificatifs : camembert à trois couleurs, pourcentage au centre ; jamais les mots, toujours la couleur */
+  .cpt { display: flex; align-items: center; gap: 10px; margin: 8px 0 0; }
+  .cpt svg { flex: 0 0 auto; display: block; }
+  .cpt .cpt-t { font-size: 13px; color: #5b6573; line-height: 1.35; }
+  .cpt .cpt-t b { color: #0F2238; font-weight: 600; }
+  .cpt-past { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin: 0 3px 0 0; }
   /* 21/11/2026 : dossier sans numéro Kivia — seuls le titre, la tête et le champ à remplir restent visibles */
   #page-dossier.bloque-kivia > nav, #page-dossier.bloque-kivia > section.carte { display: none !important; }
 </style>
@@ -687,6 +693,53 @@ function infosOuvertureTexte(dd) {
     dd.delai_audit_jours ? 'audit en ' + dd.delai_audit_jours + ' jours, échéance le ' + jourFr(dd.echeance_audit) : 'délai d’audit non renseigné',
     dd.date_signature_prevue ? 'signature prévue le ' + jourFr(dd.date_signature_prevue) : 'signature non datée',
   ].join(' · ');
+}
+
+/* ---------- COMPTEUR DE JUSTIFICATIFS (lot 2, 21/11/2026) ----------
+   Arbitrage de JFD du 21/11/2026 (option A) : dans MARTEAU le compteur est d'abord calculé AU NIVEAU DU
+   DOSSIER, une information par voyant posé — l'analyse ne descend pas encore au groupe ; le compteur par
+   groupe (décision du 20/11) viendra avec la refonte de l'analyse par groupe.
+     canard → justifiée ; jaune → sans pièce ; orange → incomplète (divergence si la phrase en est une) ;
+     carmin → divergence grave. `identite_absorbee` (radiation à la suite d'une fusion) est une simple mention
+     neutre tirée des registres : elle n'entre pas dans le compte.
+   Le pourcentage est arrondi vers le bas ; un dossier sans aucun voyant est « non analysé » (gris). */
+const CPT_COUL = { canard: '#33838B', orange: '#FF982D', carmin: '#A01040', gris: '#C9CED6' };
+const CPT_HORS = ['identite_absorbee'];
+const CPT_DIVERGENCE = /divergence|discordance|ecart/;
+function compteurDossier(d) {
+  const c = { total: 0, ok: 0, sans: 0, incomplet: 0, divergence: 0, grave: 0 };
+  (d.familles || []).forEach((f) => (f.voyants || []).forEach((v) => {
+    if (CPT_HORS.includes(v.code)) return;
+    c.total++;
+    if (v.couleur === 'canard') c.ok++;
+    else if (v.couleur === 'jaune') c.sans++;
+    else if (v.couleur === 'carmin') c.grave++;
+    else if (CPT_DIVERGENCE.test(v.code || '')) c.divergence++;
+    else c.incomplet++;
+  }));
+  c.nonAnalyse = !c.total;
+  c.orange = c.sans + c.incomplet + c.divergence; c.carmin = c.grave;
+  c.incomplets = c.orange + c.carmin; c.divergences = c.divergence + c.grave;
+  c.pc = c.total ? Math.floor(100 * c.ok / c.total) : 0;
+  return c;
+}
+function camembertSvg(c, taille) {
+  const T = taille || 46, R = T / 2, ep = Math.max(5, T * 0.2), r = R - ep / 2, P = 2 * Math.PI * r;
+  const parts = c.nonAnalyse ? [[1, CPT_COUL.gris]] : [[c.ok / c.total, CPT_COUL.canard], [c.orange / c.total, CPT_COUL.orange], [c.carmin / c.total, CPT_COUL.carmin]];
+  let dec = 0, arcs = '';
+  parts.forEach(([f, coul]) => { if (f <= 0) return;
+    arcs += '<circle cx="' + R + '" cy="' + R + '" r="' + r.toFixed(2) + '" fill="none" stroke="' + coul + '" stroke-width="' + ep.toFixed(2) + '" stroke-dasharray="' + (f * P).toFixed(3) + ' ' + (P - f * P).toFixed(3) + '" stroke-dashoffset="' + (-dec * P).toFixed(3) + '" transform="rotate(-90 ' + R + ' ' + R + ')"/>';
+    dec += f; });
+  return '<svg width="' + T + '" height="' + T + '" viewBox="0 0 ' + T + ' ' + T + '" role="img" aria-label="' + (c.nonAnalyse ? 'non analysé' : c.pc + ' % d’informations justifiées') + '">' + arcs
+    + '<text x="' + R + '" y="' + R + '" text-anchor="middle" dominant-baseline="central" font-family="Segoe UI,system-ui,sans-serif" font-weight="700" font-size="' + (T * 0.215).toFixed(1) + '" fill="#0F2238">' + (c.nonAnalyse ? '–' : c.pc + ' %') + '</text></svg>';
+}
+function compteurHtml(c, taille) {
+  if (c.nonAnalyse) return '<div class="cpt">' + camembertSvg(c, taille) + '<span class="cpt-t">Justificatifs : non analysé</span></div>';
+  const pl = (k, sing, plur) => k + ' ' + (k > 1 ? plur : sing);
+  const t = c.incomplets ? '<b>' + pl(c.incomplets, 'information incomplète', 'informations incomplètes') + '</b>'
+      + (c.divergences ? ', dont ' + pl(c.divergences, 'divergence', 'divergences') + (c.grave ? ' (<span class="cpt-past" style="background:' + CPT_COUL.carmin + '"></span>' + c.grave + ')' : '') : '')
+    : '<b>tout est justifié</b>';
+  return '<div class="cpt">' + camembertSvg(c, taille) + '<span class="cpt-t">Justificatifs du dossier : ' + t + '</span></div>';
 }
 
 const posterDossier = async (action, corps) => {
@@ -1532,7 +1585,7 @@ async function afficherEtat(ref) {
     + ' · associé ' + e(d.dossier.associe) + (d.dossier.collaborateur ? ' · collaborateur ' + e(d.dossier.collaborateur) : '')
     + ' · ouvert le ' + new Date(d.dossier.ouvert_le).toLocaleString('fr-FR')
     + ' · <b>' + (d.dossier.etat === 'provisoire' ? 'provisoire' : 'définitif possible') + '</b>'
-    + '<br>' + infosOuvertureTexte(d.dossier) + '</div>';
+    + '<br>' + infosOuvertureTexte(d.dossier) + compteurHtml(compteurDossier(d)) + '</div>';
   // 09/11/2026 — alerte de délai en tête de la page du dossier, juste sous
   // le titre avec la ligne d'informations (et non plus sous les familles).
   if (d.dossier.alerte_delai) {
