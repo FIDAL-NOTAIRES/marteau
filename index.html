@@ -102,6 +102,8 @@
 .nav-d{display:inline-block;padding:6px 14px;border:1px solid #d6d3d1;border-radius:999px;background:#fff;color:var(--nuit);text-decoration:none;font-size:13.5px;font-weight:600}
 .nav-d:hover{background:#eef4f5}
 [id^="sec-"]{scroll-margin-top:60px}
+  /* 21/11/2026 : dossier sans numéro Kivia — seuls le titre, la tête et le champ à remplir restent visibles */
+  #page-dossier.bloque-kivia > nav, #page-dossier.bloque-kivia > section.carte { display: none !important; }
 </style>
   <script src="https://connexion-omega.vercel.app/bandeau.js" defer></script>
 </head>
@@ -265,6 +267,11 @@
         <div style="flex:0 0 200px">
           <label for="date-sign">Signature prévue (facultatif)</label>
           <input type="date" id="date-sign">
+        </div>
+        <!-- 21/11/2026 (JFD) : numéro du dossier dans le logiciel métier Kivia, OBLIGATOIRE à l'ouverture -->
+        <div style="flex:0 0 180px">
+          <label for="kivia">N° de dossier Kivia</label>
+          <input type="text" id="kivia" maxlength="40" autocomplete="off">
         </div>
         <div style="flex:0 0 auto"><button id="enreg">Enregistrer et collecter</button></div>
       </div>
@@ -675,6 +682,7 @@ const LIB_TYPE_OP = { vente_immeuble: 'Vente de l’immeuble', cession_parts: 'C
 const jourFr = (iso) => (iso ? new Date(iso + 'T12:00:00').toLocaleDateString('fr-FR') : '');
 function infosOuvertureTexte(dd) {
   return [
+    dd.numero_kivia ? 'Kivia ' + dd.numero_kivia : 'numéro Kivia non renseigné',
     dd.type_operation ? LIB_TYPE_OP[dd.type_operation] : 'type d’opération non renseigné',
     dd.delai_audit_jours ? 'audit en ' + dd.delai_audit_jours + ' jours, échéance le ' + jourFr(dd.echeance_audit) : 'délai d’audit non renseigné',
     dd.date_signature_prevue ? 'signature prévue le ' + jourFr(dd.date_signature_prevue) : 'signature non datée',
@@ -1533,6 +1541,29 @@ async function afficherEtat(ref) {
       + ';background:' + (orange ? '#FFF4E8' : '#FCEEF1') + ';color:#0F2238;font-weight:600">⚠ ' + e(ad.texte) + '</div>';
   }
   $('#tete-dossier').innerHTML = t;
+  // 21/11/2026 (JFD) : un dossier ouvert avant l'obligation du numéro Kivia le DEMANDE dès qu'on le
+  // rouvre. Tant qu'il manque, la page ne montre que ce champ (l'associé en charge, lui, est exigé
+  // depuis l'origine). Un dossier clos n'est pas concerné : ses informations sont figées.
+  const bloque = !d.dossier.clos_le && !d.dossier.numero_kivia;
+  $('#page-dossier').classList.toggle('bloque-kivia', bloque);
+  if (bloque) {
+    $('#etat-res').innerHTML = '<section class="carte"><div class="alerte" style="margin:0 0 10px">Ce dossier n’a pas encore de numéro de dossier Kivia. Renseignez-le pour l’ouvrir.</div>'
+      + '<div class="rang"><div style="flex:0 0 220px"><label for="kv-num">N° de dossier Kivia</label><input type="text" id="kv-num" maxlength="40" autocomplete="off"></div>'
+      + '<div style="flex:0 0 auto"><button id="kv-enreg">Enregistrer et ouvrir le dossier</button></div><div style="flex:1 1 auto" class="att" id="kv-res"></div></div></section>';
+    const go = async () => {
+      const v = $('#kv-num').value.trim();
+      if (!v) { $('#kv-res').innerHTML = '<span style="color:#A01040">Numéro requis.</span>'; return; }
+      $('#kv-enreg').disabled = true; $('#kv-res').textContent = 'Enregistrement…';
+      try {
+        await posterDossier('modifier', { dossier: ref, numero_kivia: v, qui: (($('#collab') && $('#collab').value) || ($('#assoc') && $('#assoc').value) || d.dossier.collaborateur || d.dossier.associe || 'JFD').trim().toUpperCase() });
+      } catch (err) { $('#kv-res').innerHTML = '<span style="color:#A01040">' + e(err.message) + '</span>'; $('#kv-enreg').disabled = false; return; }
+      afficherEtat(ref).catch((err) => { $('#etat-res').innerHTML = '<div class="alerte">' + e(err.message) + '</div>'; });
+    };
+    $('#kv-enreg').addEventListener('click', go);
+    $('#kv-num').addEventListener('keydown', (ev) => { if (ev.key === 'Enter') go(); });
+    $('#kv-num').focus();
+    return;
+  }
   let h = '';
 
   // 09/11/2026 — bloc « Informations d'ouverture » : corriger le type
@@ -1550,6 +1581,7 @@ async function afficherEtat(ref) {
       + opt('', '— jours —', dd.delai_audit_jours) + [10, 20, 30, 60, 90, 120, 180].map((j) => opt(j, j + ' jours', dd.delai_audit_jours)).join('')
       + '</select></div>'
       + '<div style="flex:0 0 190px"><label for="io-date">Signature prévue</label><input type="date" id="io-date" value="' + e(dd.date_signature_prevue || '') + '"></div>'
+      + '<div style="flex:0 0 170px"><label for="io-kivia">N° de dossier Kivia</label><input type="text" id="io-kivia" maxlength="40" autocomplete="off" value="' + e(dd.numero_kivia || '') + '"' + (dd.numero_kivia ? '' : ' style="border-color:#FF982D"') + '></div>'
       + '<div style="flex:0 0 auto"><button class="sec" id="io-enreg">Enregistrer ces informations</button></div>'
       + '<div style="flex:1 1 auto" class="att" id="io-res">Sans nouvelle collecte. Laisser la date vide signifie : pas de date prévue.</div></div>';
   }
@@ -1676,6 +1708,7 @@ async function afficherEtat(ref) {
         type_operation: $('#io-type').value || null,
         delai_audit_jours: $('#io-delai').value ? Number($('#io-delai').value) : null,
         date_signature_prevue: $('#io-date').value || null,
+        numero_kivia: $('#io-kivia').value.trim() || null,
       });
       if (!r.modifie.length) { $('#io-res').textContent = 'Rien n’a changé.'; b.disabled = false; return; }
       await afficherEtat(ref);
@@ -1907,6 +1940,8 @@ $('#enreg').addEventListener('click', async () => {
   const dateSign = $('#date-sign').value;
   if (!typeOp) { $('#enreg-res').innerHTML = '<div class="alerte">Précisez le type d’opération : vente de l’immeuble ou cession de parts. Les couleurs de l’audit en dépendent.</div>'; return; }
   if (!delai) { $('#enreg-res').innerHTML = '<div class="alerte">Choisissez le délai d’audit : l’échéance du dossier en découle.</div>'; return; }
+  const kivia = $('#kivia').value.trim();
+  if (!kivia) { $('#enreg-res').innerHTML = '<div class="alerte">Indiquez le numéro du dossier dans Kivia : pas d’ouverture de dossier sans lui.</div>'; return; }
   $('#enreg').disabled = true;
   $('#enreg-res').innerHTML = '<div class="att">Ouverture du dossier…</div>';
   try {
@@ -1915,6 +1950,7 @@ $('#enreg').addEventListener('click', async () => {
       associe, collaborateur: collab || null, qui: collab || associe,
       type_operation: typeOp, delai_audit_jours: Number(delai),
       date_signature_prevue: dateSign || null,
+      numero_kivia: kivia,
     });
 
     $('#enreg-res').innerHTML = '<div class="att">Dossier ' + e(d1.dossier)
